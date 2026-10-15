@@ -288,7 +288,7 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
   const [peaksError, setPeaksError] = useState(false); // l'onde est calculée mais pas enregistrée
   const [needLocalWave, setNeedLocalWave] = useState(false); // fichier trop lourd : l'onde doit venir du fichier sur l'ordinateur
   const [waveMsg, setWaveMsg] = useState('');
-  const [videoErr, setVideoErr] = useState(false);          // 'drive' (blocage temporaire, partage retiré…) ou 'format' (codec illisible)
+  const [videoErr, setVideoErr] = useState(false);          // 'drive' (partage retiré…), 'quota' (Drive limite le fichier) ou 'format' (codec illisible)
   const [buffering, setBuffering] = useState(false);
   const [fileSize, setFileSize] = useState(null);           // taille du fichier Drive (pour prévenir l'hôte)
   const [waveStyle, setWaveStyle] = useState('bars');
@@ -718,15 +718,16 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
     data.deleteComment(aid, currentN, c.id).catch(() => {});
   };
   const copyLink = (c) => { try { navigator.clipboard.writeText(`${location.origin}${location.pathname}?c=${c.id}`); } catch {} };
-  // erreur de lecture : codec illisible (« format ») ou fichier inaccessible (« drive »)
+  // erreur de lecture : codec illisible, quota Drive du fichier dépassé, ou fichier inaccessible
   const onVideoError = async (code) => {
     if (code === 3) return setVideoErr('format');
-    if (code === 4) {
-      try {
-        const r = await fetch(videoUrl(source, videoId), { headers: { Range: 'bytes=0-0' } });
-        if (r.ok) return setVideoErr('format');
-      } catch {}
-    }
+    try {
+      const r = await fetch(videoUrl(source, videoId), { headers: { Range: 'bytes=0-1' } });
+      if (!r.ok) {
+        const reason = (await r.json().catch(() => null))?.error?.errors?.[0]?.reason;
+        return setVideoErr(reason === 'downloadQuotaExceeded' ? 'quota' : 'drive');
+      }
+    } catch {}
     setVideoErr('drive');
   };
   const retryVideo = () => {
@@ -889,6 +890,10 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
               {videoErr === 'format' ? <>
                 <p><strong>Ce format ne se lit pas dans le navigateur.</strong></p>
                 <p className="mut">Exporte la vidéo en MP4 (H.264) et partage ce fichier-là.</p>
+              </> : videoErr === 'quota' ? <>
+                <p><strong>Google Drive bloque ce fichier pour aujourd’hui.</strong></p>
+                <p className="mut">Il a été trop téléchargé en 24 h (c’est vite le cas pour un fichier lourd). Ça se débloque tout seul dans la journée. En attendant, partage une version allégée (1080p) ou un lien YouTube non répertorié.</p>
+                <button className="ghost sm" onClick={retryVideo}>Réessayer</button>
               </> : <>
                 <p><strong>La vidéo ne se charge pas.</strong></p>
                 <p className="mut">Google Drive limite parfois la lecture d’un fichier (trop de requêtes en peu de temps, fichier très lourd) ou le partage « avec le lien » a été retiré. Réessaie dans quelques minutes.</p>
