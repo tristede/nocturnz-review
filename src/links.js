@@ -42,6 +42,9 @@ export async function checkYouTube(id) {
 // Par défaut, la clé du navigateur du projet Firebase (à restreindre à l'API Drive, voir README).
 const DRIVE_KEY = import.meta.env.VITE_DRIVE_API_KEY || firebaseConfig.apiKey;
 export const driveUrl = (id) => `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${DRIVE_KEY}`;
+// vignette publique (sans clé) ; peut échouer, l'image est alors simplement masquée
+export const thumbUrl = (source, id) =>
+  source === 'youtube' ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : `https://drive.google.com/thumbnail?id=${id}&sz=w480`;
 export const videoUrl = (source, videoId) => (source === 'drive' ? driveUrl(videoId) : null);
 
 // Métadonnées d'un fichier Drive public (taille, durée) : une petite requête JSON, sans télécharger la vidéo.

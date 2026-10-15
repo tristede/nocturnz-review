@@ -80,8 +80,8 @@ export const saveVersion = (aid, n, patch) => updateDoc(doc(versionsRef(aid), St
 
 /* ───────── Hôtes ───────── */
 
-export async function listAssets(uid) {
-  const snap = await getDocs(query(collection(db, 'assets'), where('owner', '==', uid)));
+// hôte : toutes ses reviews ; invité : celles d'un projet (le lien du projet ouvre toutes ses reviews)
+async function withVersions(snap) {
   const assets = await Promise.all(snap.docs.map(async (d) => {
     const a = toAsset(d);
     const vs = (await getDocs(versionsRef(d.id))).docs.map(toVersion).sort((x, y) => x.n - y.n);
@@ -96,12 +96,19 @@ export async function listAssets(uid) {
   }));
   return assets.sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
 }
+export const listAssets = async (uid) => withVersions(await getDocs(query(collection(db, 'assets'), where('owner', '==', uid))));
+export async function listProjectAssets(pid, uid) {
+  const q = uid
+    ? query(collection(db, 'assets'), where('owner', '==', uid), where('project', '==', pid))
+    : query(collection(db, 'assets'), where('project', '==', pid));
+  return withVersions(await getDocs(q));
+}
 
-export async function createAsset({ uid, title, source, videoId }) {
+export async function createAsset({ uid, title, source, videoId, project = null }) {
   const aid = newToken();
   await setDoc(doc(db, 'assets', aid), {
     title, owner: uid, created: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 30 * DAY),
-    revoked: false, access: 'link', invited: [],
+    revoked: false, access: 'link', invited: [], project,
   });
   await setDoc(doc(versionsRef(aid), '1'), newVersion(1, source, videoId));
   return aid;
@@ -109,14 +116,47 @@ export async function createAsset({ uid, title, source, videoId }) {
 
 export const addVersion = (aid, n, source, videoId) => setDoc(doc(versionsRef(aid), String(n)), newVersion(n, source, videoId));
 
-// expiresAt : nombre de ms, null (jamais) ou undefined (inchangé)
-export function updateShare(aid, { expiresAt, access, invited, revoked }) {
+export const moveAsset = (aid, project) => updateDoc(doc(db, 'assets', aid), { project: project || null });
+
+/* ───────── Projets : un dossier de reviews avec son propre lien ───────── */
+
+const toProject = (d) => { const p = d.data(); return { id: d.id, ...p, created: ms(p.created), expiresAt: ms(p.expiresAt) }; };
+
+export async function loadProject(pid) {
+  const snap = await getDoc(doc(db, 'projects', pid));
+  if (!snap.exists()) { const e = new Error('not-found'); e.code = 'not-found'; throw e; }
+  return toProject(snap);
+}
+export async function listProjects(uid) {
+  const snap = await getDocs(query(collection(db, 'projects'), where('owner', '==', uid)));
+  return snap.docs.map(toProject).sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
+}
+export async function createProject(uid, name) {
+  const pid = newToken();
+  await setDoc(doc(db, 'projects', pid), {
+    name: name.trim().slice(0, 120), owner: uid, created: serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(Date.now() + 30 * DAY), revoked: false, access: 'link', invited: [],
+  });
+  return pid;
+}
+export const renameProject = (pid, name) => updateDoc(doc(db, 'projects', pid), { name: name.trim().slice(0, 120) });
+// les reviews du projet ne sont pas supprimées : elles repassent dans « Sans projet »
+export async function deleteProject(pid, uid) {
+  const snap = await getDocs(query(collection(db, 'assets'), where('owner', '==', uid), where('project', '==', pid)));
+  const batch = writeBatch(db);
+  snap.docs.forEach((d) => batch.update(d.ref, { project: null }));
+  batch.delete(doc(db, 'projects', pid));
+  await batch.commit();
+}
+
+// expiresAt : nombre de ms, null (jamais) ou undefined (inchangé) ; kind = 'assets' ou 'projects'
+export function updateShare(aid, { expiresAt, access, invited, revoked }, kind = 'assets') {
   const patch = {};
   if (expiresAt !== undefined) patch.expiresAt = expiresAt === null ? null : Timestamp.fromMillis(expiresAt);
   if (access) patch.access = access;
   if (invited) patch.invited = invited;
   if (revoked !== undefined) patch.revoked = revoked;
-  return updateDoc(doc(db, 'assets', aid), patch);
+  return updateDoc(doc(db, kind, aid), patch);
 }
 
 export const parseEmails = (text) =>

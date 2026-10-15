@@ -250,7 +250,7 @@ function createYtShim({ host, videoId, box, onDuration, onState, onTime }) {
   return { shim, destroy() { dead = true; clearInterval(poll); try { player?.destroy(); } catch {} host.remove(); } };
 }
 
-export default function Review({ aid, title, admin, initialFps, initialPeaks, source, videoId, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
+export default function Review({ aid, title, admin, back = null, initialFps, initialPeaks, source, videoId, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
   const isYt = source === 'youtube';
   const navigate = useNavigate();
   const [approval, setApproval] = useState(initialStatus);
@@ -792,8 +792,8 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
       <div className="stage">
         <header className="topbar">
           <div>
-            {admin
-              ? <Link className="eyebrow back" to="/">← Vos reviews</Link>
+            {back
+              ? <Link className="eyebrow back" to={back.to}>← {back.label}</Link>
               : <div className="eyebrow">Review{isYt ? ' · YouTube' : ''}</div>}
             <h1 className="title">{title}</h1>
             {admin && (

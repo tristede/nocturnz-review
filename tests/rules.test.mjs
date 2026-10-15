@@ -21,6 +21,13 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'assets/INV'), asset({ access: 'invite', invited: ['friend@x.test'] }));
   await setDoc(doc(db, 'assets/LINK/versions/1'), { n: 1, source: 'youtube', videoId: 'abc', fps: null, peaks: null, status: null, statusBy: null, statusAt: null });
   await setDoc(doc(db, 'assets/INV/versions/1'), { n: 1, source: 'youtube', videoId: 'abc', fps: null, peaks: null, status: null, statusBy: null, statusAt: null });
+  await setDoc(doc(db, 'projects/PRJ'), { name: 'Clip Zeph', owner: 'hostUid', created: Timestamp.now(), expiresAt: future, revoked: false, access: 'link', invited: [] });
+  await setDoc(doc(db, 'projects/PREV'), { name: 'Ancien', owner: 'hostUid', created: Timestamp.now(), expiresAt: future, revoked: true, access: 'link', invited: [] });
+  await setDoc(doc(db, 'projects/OTHER'), { name: 'Autre', owner: 'u3', created: Timestamp.now(), expiresAt: future, revoked: false, access: 'link', invited: [] });
+  // review dont le lien à elle est désactivé : seul le lien du projet l'ouvre
+  await setDoc(doc(db, 'assets/INPRJ'), asset({ revoked: true, project: 'PRJ' }));
+  await setDoc(doc(db, 'assets/INPRJ/versions/1'), { n: 1, source: 'youtube', videoId: 'abc', fps: null, peaks: null, status: null, statusBy: null, statusAt: null });
+  await setDoc(doc(db, 'assets/INPREV'), asset({ revoked: true, project: 'PREV' }));
   await setDoc(doc(db, 'assets/LINK/versions/1/comments/c1'), { author: 'Léa', body: 'ok', t: 1, tEnd: null, x: null, y: null, shapes: null, parentId: null, resolved: false, created: Timestamp.now() });
 });
 
@@ -97,6 +104,34 @@ await check('un invité annule la validation', assertSucceeds(updateDoc(doc(gues
 await check('statut inventé : refusé', assertFails(updateDoc(doc(guestDb, 'assets/LINK/versions/1'), { status: 'hacked', statusBy: 'x', statusAt: 1 })));
 await check('un invité ne touche pas au fps ni à l\'onde', assertFails(updateDoc(doc(guestDb, 'assets/LINK/versions/1'), { fps: 60 })));
 await check('un invité ne crée pas de version', assertFails(setDoc(doc(guestDb, 'assets/LINK/versions/9'), { n: 9, source: 'youtube', videoId: 'x', fps: null, peaks: null, status: null, statusBy: null, statusAt: null })));
+
+console.log('Projets');
+const project = (over = {}) => ({ name: 'Pub', owner: 'hostUid', created: serverTimestamp(), expiresAt: future, revoked: false, access: 'link', invited: [], ...over });
+await check('un hôte crée un projet', assertSucceeds(setDoc(doc(hostDb, 'projects/P1'), project())));
+await check('…pas au nom d\'un autre', assertFails(setDoc(doc(hostDb, 'projects/P2'), project({ owner: 'u2' }))));
+await check('…pas sans être hôte', assertFails(setDoc(doc(otherHostDb, 'projects/P3'), project({ owner: 'u2' }))));
+await check('…pas sans nom', assertFails(setDoc(doc(hostDb, 'projects/P4'), project({ name: '' }))));
+await check('un hôte liste ses projets', assertSucceeds(getDocs(query(collection(hostDb, 'projects'), where('owner', '==', 'hostUid')))));
+await check('personne ne liste les projets des autres', assertFails(getDocs(collection(guestDb, 'projects'))));
+await check('un invité ouvre un projet par son lien', assertSucceeds(getDoc(doc(guestDb, 'projects/PRJ'))));
+await check('…pas un projet désactivé', assertFails(getDoc(doc(guestDb, 'projects/PREV'))));
+await check('un invité liste les reviews d\'un projet ouvert', assertSucceeds(getDocs(query(collection(guestDb, 'assets'), where('project', '==', 'PRJ')))));
+await check('…pas celles d\'un projet désactivé', assertFails(getDocs(query(collection(guestDb, 'assets'), where('project', '==', 'PREV')))));
+await check('le lien du projet ouvre une review du projet', assertSucceeds(getDoc(doc(guestDb, 'assets/INPRJ'))));
+await check('…ses versions', assertSucceeds(getDocs(collection(guestDb, 'assets/INPRJ/versions'))));
+await check('…on peut y commenter', assertSucceeds(setDoc(doc(guestDb, 'assets/INPRJ/versions/1/comments/p1'), comment())));
+await check('…et valider', assertSucceeds(updateDoc(doc(guestDb, 'assets/INPRJ/versions/1'), { status: 'approved', statusBy: 'Léa', statusAt: 1 })));
+await check('projet désactivé : ses reviews se ferment aussi', assertFails(getDoc(doc(guestDb, 'assets/INPREV'))));
+await check('un hôte range une review dans son projet', assertSucceeds(updateDoc(doc(hostDb, 'assets/NOEXP'), { project: 'PRJ' })));
+await check('…pas dans le projet d\'un autre', assertFails(updateDoc(doc(hostDb, 'assets/NOEXP'), { project: 'OTHER' })));
+await check('…ni dans un projet qui n\'existe pas', assertFails(updateDoc(doc(hostDb, 'assets/NOEXP'), { project: 'NOPE' })));
+await check('l\'hôte sort une review de son projet', assertSucceeds(updateDoc(doc(hostDb, 'assets/NOEXP'), { project: null })));
+await check('l\'hôte crée une review directement dans un projet', assertSucceeds(setDoc(doc(hostDb, 'assets/NEWP'), asset({ project: 'PRJ' }))));
+await check('l\'hôte liste les reviews d\'un projet désactivé (owner + project)', assertSucceeds(getDocs(query(collection(hostDb, 'assets'), where('owner', '==', 'hostUid'), where('project', '==', 'PREV')))));
+await check('un invité ne renomme pas un projet', assertFails(updateDoc(doc(guestDb, 'projects/PRJ'), { name: 'x' })));
+await check('un invité ne déplace pas une review', assertFails(updateDoc(doc(guestDb, 'assets/INPRJ'), { project: null })));
+await check('l\'hôte renomme et désactive son projet', assertSucceeds(updateDoc(doc(hostDb, 'projects/P1'), { name: 'Pub 2', revoked: true })));
+await check('l\'hôte supprime son projet', assertSucceeds(deleteDoc(doc(hostDb, 'projects/P1'))));
 
 console.log('Gestion du partage');
 await check('l\'hôte désactive puis réactive', assertSucceeds(updateDoc(doc(hostDb, 'assets/NOEXP'), { revoked: true })));

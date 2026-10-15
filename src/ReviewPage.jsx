@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { loadReview } from './data';
+import { loadProject, loadReview } from './data';
 import Review from './Review';
 import Notice from './Notice';
 
@@ -19,7 +19,11 @@ export default function ReviewPage() {
     let dead = false;
     if (!loaded.current) setState({ status: 'loading' });
     loadReview(token)
-      .then((r) => { if (!dead) { loaded.current = true; setState({ status: 'ok', ...r }); } })
+      .then(async (r) => {
+        // retour vers le projet si on peut l'ouvrir (hôte, ou invité venu par le lien du projet)
+        const project = r.asset.project ? await loadProject(r.asset.project).catch(() => null) : null;
+        if (!dead) { loaded.current = true; setState({ status: 'ok', ...r, project }); }
+      })
       .catch((e) => { if (!dead) { loaded.current = false; setState({ status: e.code === 'not-found' ? 'missing' : 'denied' }); } });
     return () => { dead = true; };
   }, [token, ready, user?.uid, v]);
@@ -41,7 +45,9 @@ export default function ReviewPage() {
     );
   }
 
-  const { asset, versions } = state;
+  const { asset, versions, project } = state;
+  const admin = !!user && asset.owner === user.uid;
+  const back = project ? { to: `/p/${project.id}`, label: project.name } : admin ? { to: '/', label: 'Vos reviews' } : null;
   const latest = versions[versions.length - 1];
   const current = versions.find((x) => String(x.n) === v) || latest;
   const cmp = versions.find((x) => String(x.n) === sp.get('cmp') && x.n !== current.n)?.n ?? null;
@@ -50,7 +56,8 @@ export default function ReviewPage() {
       key={`${token}:${current.n}`}
       aid={token}
       title={asset.title}
-      admin={!!user && asset.owner === user.uid}
+      admin={admin}
+      back={back}
       initialFps={current.fps}
       initialPeaks={current.peaks}
       source={current.source}

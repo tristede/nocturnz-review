@@ -5,6 +5,8 @@ rules_version = '2';
 //  - un invité lit et commente une review à condition qu'elle soit active (ni désactivée, ni expirée) :
 //      · access = 'link'   : quiconque connaît le lien (l'identifiant du document est le secret) ;
 //      · access = 'invite' : seulement les Gmail listés, connectés avec Google (e-mail vérifié) ;
+//  - un projet regroupe des reviews et a son propre lien, avec les mêmes options : ouvrir un projet donne accès
+//    à toutes ses reviews (chacune garde aussi son lien à elle) ;
 //  - un invité ne peut jamais modifier que : le statut « résolu » d'un commentaire et la validation d'une version.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -22,35 +24,60 @@ service cloud.firestore {
       return a.access != 'invite' || (verified() && request.auth.token.email.lower() in a.invited);
     }
     function viewable(a) { return live(a) && invitedOk(a); }
+    function projectOf(pid) { return get(/databases/$(database)/documents/projects/$(pid)).data; }
+    // accès à une review par le lien de son projet
+    function viaProject(a) { return a.get('project', null) != null && viewable(projectOf(a.project)); }
+    function guestOk(a) { return viewable(a) || viaProject(a); }
     function assetOf(aid) { return get(/databases/$(database)/documents/assets/$(aid)).data; }
-    function canRead(aid) { return owns(assetOf(aid)) || viewable(assetOf(aid)); }
+    function canRead(aid) { return owns(assetOf(aid)) || guestOk(assetOf(aid)); }
+    // le projet d'une review doit appartenir au même hôte
+    function projectOk(d) { return d.get('project', null) == null || (d.project is string && owns(projectOf(d.project))); }
+    function shareOk(d) {
+      return d.access in ['link', 'invite'] && d.invited is list && d.invited.size() <= 50;
+    }
 
     // la liste des hôtes ne passe jamais par un client (gérée avec le script scripts/seed-hosts.mjs)
     match /config/{doc} {
       allow read, write: if false;
     }
 
-    match /assets/{aid} {
+    match /projects/{pid} {
       allow get: if owns(resource.data) || viewable(resource.data);
-      // « list » exige where('owner', '==', uid) : on ne peut jamais énumérer les reviews des autres
       allow list: if owns(resource.data);
       allow create: if isHost()
         && request.resource.data.owner == request.auth.uid
-        && request.resource.data.keys().hasOnly(['title', 'owner', 'created', 'expiresAt', 'revoked', 'access', 'invited'])
-        && request.resource.data.title is string && request.resource.data.title.size() <= 120
-        && request.resource.data.access in ['link', 'invite']
-        && request.resource.data.invited is list && request.resource.data.invited.size() <= 50;
+        && request.resource.data.keys().hasOnly(['name', 'owner', 'created', 'expiresAt', 'revoked', 'access', 'invited'])
+        && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 120
+        && shareOk(request.resource.data);
       allow update: if owns(resource.data)
         && request.resource.data.owner == resource.data.owner
-        && request.resource.data.access in ['link', 'invite']
-        && request.resource.data.invited is list && request.resource.data.invited.size() <= 50;
+        && request.resource.data.keys().hasOnly(['name', 'owner', 'created', 'expiresAt', 'revoked', 'access', 'invited'])
+        && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 120
+        && shareOk(request.resource.data);
+      allow delete: if owns(resource.data);
+    }
+
+    match /assets/{aid} {
+      allow get: if owns(resource.data) || guestOk(resource.data);
+      // « list » exige where('owner', '==', uid), ou where('project', '==', id) d'un projet qu'on peut ouvrir :
+      // on ne peut jamais énumérer les reviews des autres
+      allow list: if owns(resource.data) || viaProject(resource.data);
+      allow create: if isHost()
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.keys().hasOnly(['title', 'owner', 'created', 'expiresAt', 'revoked', 'access', 'invited', 'project'])
+        && request.resource.data.title is string && request.resource.data.title.size() <= 120
+        && shareOk(request.resource.data) && projectOk(request.resource.data);
+      allow update: if owns(resource.data)
+        && request.resource.data.owner == resource.data.owner
+        && shareOk(request.resource.data)
+        && (request.resource.data.get('project', null) == resource.data.get('project', null) || projectOk(request.resource.data));
       allow delete: if owns(resource.data);
 
       match /versions/{vid} {
         allow read: if canRead(aid);
         allow create, delete: if owns(assetOf(aid));
         allow update: if owns(assetOf(aid))
-          || (viewable(assetOf(aid))
+          || (guestOk(assetOf(aid))
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'statusBy', 'statusAt'])
               && (request.resource.data.status == null || request.resource.data.status in ['approved', 'changes'])
               && (request.resource.data.statusBy == null
