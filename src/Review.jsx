@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import * as data from './data';
-import { videoUrl } from './links';
+import { videoUrl, driveMeta } from './links';
+import { peaksFromLocalMp4 } from './audioPeaks';
 
 const COLORS = ['#ff4d4d', '#ffb020', '#3ecf8e', '#4da3ff', '#ffffff'];
 const TOOLS = [['arrow', 'Flèche'], ['pen', 'Crayon'], ['circle', 'Cercle'], ['rect', 'Rectangle'], ['pin', 'Repère']];
@@ -285,6 +286,11 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
   const [peaks, setPeaks] = useState(() => decodePeaks(initialPeaks));
   const [waving, setWaving] = useState(false);
   const [peaksError, setPeaksError] = useState(false); // l'onde est calculée mais pas enregistrée
+  const [needLocalWave, setNeedLocalWave] = useState(false); // fichier trop lourd : l'onde doit venir du fichier sur l'ordinateur
+  const [waveMsg, setWaveMsg] = useState('');
+  const [videoErr, setVideoErr] = useState(false);          // 'drive' (blocage temporaire, partage retiré…) ou 'format' (codec illisible)
+  const [buffering, setBuffering] = useState(false);
+  const [fileSize, setFileSize] = useState(null);           // taille du fichier Drive (pour prévenir l'hôte)
   const [waveStyle, setWaveStyle] = useState('bars');
   const [waveTint, setWaveTint] = useState('vol');
   const [waveChannels, setWaveChannels] = useState('mono'); // 'mono' (fusionné) | 'stereo' (2 voies)
@@ -398,7 +404,10 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
   }, [compareN, ratio]);
 
   // --- déplacement à l'image près : on vise le milieu de l'image pour éviter les erreurs d'arrondi ---
+  const scrub = useRef({ last: 0, pending: null, timer: null });
   const seekF = useCallback((f) => {
+    const sc = scrub.current;
+    clearTimeout(sc.timer); sc.pending = null; sc.last = performance.now(); // tout déplacement annule le scrub en attente
     const v = vid.current;
     if (!v) return;
     const max = Math.max(0, Math.ceil((v.duration || 0) * Ff.current) - 1);
@@ -410,12 +419,27 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
     if (sl) sl.currentTime = Math.max(0, Math.min(t, (slaveDurRef.current || Infinity) - 0.05));
   }, []);
   const seekT = useCallback((t) => seekF(Math.round(t * Ff.current)), [seekF]);
-  const stepF = useCallback((d) => seekF(Math.floor(vid.current.currentTime * Ff.current + 1e-4) + d), [seekF]);
+  const scrubTo = useCallback((f, final = false) => {
+    const sc = scrub.current;
+    clearTimeout(sc.timer);
+    f = clamp(f, 0, Math.max(0, Math.ceil((vid.current?.duration || 0) * Ff.current) - 1));
+    if (final || performance.now() - sc.last > 250) { seekF(f); return; }
+    sc.pending = f;
+    setNow((f + 0.5) / Ff.current); // la tête de lecture suit tout de suite
+    sc.timer = setTimeout(() => { if (sc.pending != null) seekF(sc.pending); }, 250);
+  }, [seekF]);
+  const flushScrub = useCallback(() => { const p = scrub.current.pending; if (p != null) seekF(p); }, [seekF]);
+  useEffect(() => () => clearTimeout(scrub.current.timer), []);
+  const stepF = useCallback((d) => seekF((scrub.current.pending ?? Math.floor(vid.current.currentTime * Ff.current + 1e-4)) + d), [seekF]);
   // flèches : pas selon le mode choisi, Maj = l'autre mode le temps d'un appui
-  const stepBy = useCallback((dir, invert = false) => {
+  const stepBy = useCallback((dir, invert = false, held = false) => {
     const perFrame = (stepRef.current === 'frame') !== invert;
-    stepF(dir * (perFrame ? 1 : Math.round(Ff.current)));
-  }, [stepF]);
+    const d = dir * (perFrame ? 1 : Math.round(Ff.current));
+    if (!held) return stepF(d);
+    // touche maintenue : on avance depuis la position affichée, la vidéo suit au plus 4 fois par seconde
+    const base = scrub.current.pending ?? Math.floor(vid.current.currentTime * Ff.current + 1e-4);
+    scrubTo(base + d);
+  }, [stepF, scrubTo]);
 
   const onMeta = async (v) => {
     setDur(v.duration);
@@ -442,7 +466,7 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
       host, videoId, box: () => wrap.current,
       onDuration: (x) => { setDur(x); measure(); },
       onState: (st) => { setPlaying(st === 1 || st === 3); if (st === 1) setSel(null); }, // la mise en mémoire compte comme lecture
-      onTime: (c) => setNow(c),
+      onTime: (c) => { if (scrub.current.pending == null) setNow(c); },
     });
     vid.current = shim;
     return () => { destroy(); vid.current = null; };
@@ -563,36 +587,51 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
     return false;
   };
 
+  // taille du fichier Drive : sert à décider comment calculer l'onde et à prévenir l'hôte des fichiers lourds
+  useEffect(() => {
+    if (source !== 'drive' || !admin) return;
+    let dead = false;
+    // -1 = taille inconnue (requête refusée, par ex. blocage Google) : on n'attend pas indéfiniment
+    driveMeta(videoId).then((m) => { if (!dead) setFileSize(m?.size ?? -1); });
+    return () => { dead = true; };
+  }, [source, videoId, admin]);
+
+  const AUTO_WAVE_MAX = 300e6; // au-delà, télécharger tout le fichier pour en extraire le son n'est pas raisonnable
   const wavedRef = useRef(false);
   useEffect(() => {
     if (isYt || !admin || peaks || wavedRef.current || !Number.isFinite(dur) || dur <= 0) return;
+    if (source === 'drive' && fileSize == null) return; // on attend la taille
     wavedRef.current = true;
+    if (fileSize > AUTO_WAVE_MAX) { setNeedLocalWave(true); return; }
     setWaving(true);
     (async () => {
       try {
         const p = await computePeaks(vid.current.currentSrc, dur);
-        if (p) {
-          setPeaks(p);
-          await savePeaks(p);
-        }
-      } finally { setWaving(false); }
+        if (p) { setPeaks(p); await savePeaks(p); } else setNeedLocalWave(true);
+      } catch { setNeedLocalWave(true); } finally { setWaving(false); }
     })();
-  }, [admin, peaks, dur, aid, currentN]);
+  }, [admin, peaks, dur, aid, currentN, fileSize, source]);
 
   // YouTube : onde calculée depuis le fichier source de l'admin (local, jamais envoyé), seuls les pics sont enregistrés
   const peaksFromFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !dur) return;
-    setWaving(true);
-    const url = URL.createObjectURL(file);
+    setWaving(true); setWaveMsg('');
+    let p = null, err = null;
     try {
-      const p = await computePeaks(url, dur);
-      if (p) {
-        setPeaks(p);
-        await savePeaks(p);
-      } else alert('Impossible de lire l’audio de ce fichier.');
-    } finally { URL.revokeObjectURL(url); setWaving(false); }
+      p = await peaksFromLocalMp4(file, dur, (x) => setWaveMsg(`${Math.round(x * 100)} %`));
+    } catch (ex) {
+      err = ex;
+      // pas un MP4/MOV lisible par morceaux : méthode simple si le fichier tient en mémoire
+      if (file.size <= 400e6) { // limite réelle de la méthode simple (tout le fichier en mémoire)
+        const url = URL.createObjectURL(file);
+        try { p = await computePeaks(url, dur); } catch {} finally { URL.revokeObjectURL(url); }
+      }
+    }
+    setWaving(false); setWaveMsg('');
+    if (p) { setPeaks(p); setNeedLocalWave(false); await savePeaks(p); }
+    else alert(`Impossible de lire le son de ce fichier.${err ? `\n${err.message}` : ''}`);
   };
 
   const drawing = shapes.length > 0 || !!pin || !!draft;
@@ -612,6 +651,7 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
   };
   const onDown = (e) => {
     if (!tool) return;
+    if (!draftHere && (shapes.length || pin)) { seekF(stampF); return; }
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = point(e);
     if (tool === 'pin') return setPin(p);
@@ -668,6 +708,7 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
   };
   const goVersion = (n) => navigate(`/r/${aid}?v=${n}${compareN && compareN !== n ? `&cmp=${compareN}` : ''}`);
   const fmtDay = (t) => new Date(t).toLocaleDateString('fr-BE', { day: 'numeric', month: 'short' });
+  const fmtWhen = (t) => new Date(t).toLocaleString('fr-BE', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
   const toggle = async (c) => {
     data.setResolved(aid, currentN, c.id, !c.resolved).catch(() => {});
@@ -677,21 +718,43 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
     data.deleteComment(aid, currentN, c.id).catch(() => {});
   };
   const copyLink = (c) => { try { navigator.clipboard.writeText(`${location.origin}${location.pathname}?c=${c.id}`); } catch {} };
-  const playPause = () => { const v = vid.current; v.paused ? v.play() : v.pause(); };
+  // erreur de lecture : codec illisible (« format ») ou fichier inaccessible (« drive »)
+  const onVideoError = async (code) => {
+    if (code === 3) return setVideoErr('format');
+    if (code === 4) {
+      try {
+        const r = await fetch(videoUrl(source, videoId), { headers: { Range: 'bytes=0-0' } });
+        if (r.ok) return setVideoErr('format');
+      } catch {}
+    }
+    setVideoErr('drive');
+  };
+  const retryVideo = () => {
+    const v = vid.current;
+    if (!v) return;
+    const t = v.currentTime;
+    setVideoErr(false); setBuffering(false);
+    v.load();
+    if (t > 0) v.addEventListener('loadedmetadata', () => seekT(t), { once: true });
+  };
+  const playPause = () => { flushScrub(); const v = vid.current; v.paused ? v.play() : v.pause(); };
 
   // --- clavier : image par image, toujours actif ---
   useEffect(() => {
     const onKey = (e) => {
       if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || !vid.current) return;
       if (e.key === ' ') { e.preventDefault(); playPause(); }
-      else if (e.key === 'ArrowLeft') { e.preventDefault(); stepBy(-1, e.shiftKey); }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); stepBy(1, e.shiftKey); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); stepBy(-1, e.shiftKey, e.repeat); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); stepBy(1, e.shiftKey, e.repeat); }
       else if (e.key === 's' || e.key === 'S') { toggleStep(); }
       else if (e.key === 'Escape') { setTool(null); }
     };
+    // touche relâchée : la vidéo rejoint tout de suite la position affichée
+    const onUpKey = (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') flushScrub(); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [stepBy, toggleStep]);
+    window.addEventListener('keyup', onUpKey);
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keyup', onUpKey); };
+  }, [stepBy, toggleStep, flushScrub]);
 
   // --- données dérivées ---
   const tops = useMemo(() => comments.filter((c) => !c.parent_id), [comments]);
@@ -709,13 +772,13 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
     return true;
   });
 
-  // annotations visibles sur l'image : dès l'image du commentaire, jusqu'à la fin de la plage (ou 1 s)
-  const visible = tops.filter((c) => {
-    if (!hasMarks(c)) return false;
-    if (c.id === sel) return true;
-    const a = Math.round(c.t * F), b = c.t_end ? Math.round(c.t_end * F) : a + Math.round(F);
-    return curF >= a && curF <= b;
-  });
+  // Un dessin appartient à une image précise : il s'affiche à l'arrêt sur cette image, et sur toute la plage
+  // pour un commentaire « In/Out ». YouTube ne se cale pas à l'image près : on tolère 2 images d'écart.
+  const tol = isYt ? 2 : 0;
+  const atFrame = (a, b) => (b != null ? curF >= a - tol && curF <= b + tol : !playing && Math.abs(curF - a) <= tol);
+  const visible = tops.filter((c) => hasMarks(c) && atFrame(Math.round(c.t * F), c.t_end ? Math.round(c.t_end * F) : null));
+  // le dessin en cours appartient à l'image du commentaire en préparation
+  const draftHere = atFrame(stampF, endF);
 
   const askName = !nameOk || editName;
   const draftLabel = endF != null ? `${label(stampF / F)} → ${label(endF / F)}` : label(stampF / F);
@@ -728,8 +791,17 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
       <div className="stage">
         <header className="topbar">
           <div>
-            <div className="eyebrow">Review{isYt ? ' · YouTube' : ''}</div>
+            {admin
+              ? <Link className="eyebrow back" to="/">← Vos reviews</Link>
+              : <div className="eyebrow">Review{isYt ? ' · YouTube' : ''}</div>}
             <h1 className="title">{title}</h1>
+            {admin && (
+              <div className="status-line">
+                {approval
+                  ? <><span className={`state ${approval.status}`}>{approval.status === 'approved' ? 'Validée par le client' : 'Le client demande des modifications'}</span> · {approval.by}, {fmtDay(approval.at)}</>
+                  : 'En attente de l’avis du client'}
+              </div>
+            )}
           </div>
           <div className="row">
             {versions.length > 1 && <button className={compareN ? 'ghost on' : 'ghost'} onClick={toggleCompare} title="Voir deux versions côte à côte, lecture synchronisée">Comparer</button>}
@@ -756,18 +828,22 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
             <button className="ghost sm" onClick={() => goVersion(latestN)}>Voir la v{latestN}</button>
           </div>
         )}
-        <div className="approval">
-          <div>
-            {approval
-              ? <><span className={`state ${approval.status}`}>{approval.status === 'approved' ? 'Version validée' : 'Modifications demandées'}</span><span className="mut"> · {approval.by}, {fmtDay(approval.at)}</span></>
-              : <span className="mut">En attente de validation</span>}
+        {!admin && (() => { const mine = approval && name.trim() && approval.by === name.trim(); return (
+          <div className="approval">
+            <div>
+              {approval
+                ? <><span className={`state ${approval.status}`}>{mine
+                    ? (approval.status === 'approved' ? 'Tu as validé cette version' : 'Tu as demandé des modifications')
+                    : `${approval.by} ${approval.status === 'approved' ? 'a validé cette version' : 'a demandé des modifications'}`}</span><span className="mut"> · {fmtDay(approval.at)}</span></>
+                : <span>Cette version te convient ? <span className="mut">Une fois tes commentaires laissés, donne ton avis.</span></span>}
+            </div>
+            <div className="row">
+              {approval && <button className="link" onClick={() => setReview(null)}>{mine ? 'Changer d’avis' : 'Retirer l’avis'}</button>}
+              <button className={approval?.status === 'changes' ? 'ghost sm on' : 'ghost sm'} onClick={() => setReview('changes')}>Demander des modifications</button>
+              <button className={approval?.status === 'approved' ? 'ok sm' : 'sm'} onClick={() => setReview('approved')}>{approval?.status === 'approved' ? '✓ Validée' : 'Valider cette version'}</button>
+            </div>
           </div>
-          <div className="row">
-            {approval && <button className="link" onClick={() => setReview(null)}>Annuler</button>}
-            <button className={approval?.status === 'changes' ? 'ghost sm on' : 'ghost sm'} onClick={() => setReview('changes')}>Demander des modifications</button>
-            <button className={approval?.status === 'approved' ? 'ok sm' : 'sm'} onClick={() => setReview('approved')}>{approval?.status === 'approved' ? '✓ Validée' : 'Approuver'}</button>
-          </div>
-        </div>
+        ); })()}
 
         {compareN && (
           <div className="cmp-bar">
@@ -797,23 +873,42 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
             </>
           ) : <video ref={vid} src={videoUrl(source, videoId)} preload="metadata" playsInline
             onClick={playPause}
-            onLoadedMetadata={(e) => onMeta(e.currentTarget)}
-            onTimeUpdate={(e) => setNow(e.currentTarget.currentTime)}
-            onSeeked={(e) => setNow(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => { setVideoErr(false); onMeta(e.currentTarget); }}
+            onTimeUpdate={(e) => { if (scrub.current.pending == null) setNow(e.currentTarget.currentTime); }}
+            onSeeked={(e) => { if (scrub.current.pending == null) setNow(e.currentTarget.currentTime); }}
             onPlay={() => { setPlaying(true); setSel(null); }}
-            onPause={() => setPlaying(false)} />}
+            onPause={() => setPlaying(false)}
+            onError={(e) => onVideoError(e.currentTarget.error?.code)}
+            onEmptied={() => setBuffering(false)}
+            onWaiting={() => setBuffering(true)}
+            onPlaying={() => { setBuffering(false); setVideoErr(false); }}
+            onLoadedData={() => setVideoErr(false)}
+            onCanPlay={() => { setBuffering(false); setVideoErr(false); }} />}
+          {videoErr && (
+            <div className="vmsg">
+              {videoErr === 'format' ? <>
+                <p><strong>Ce format ne se lit pas dans le navigateur.</strong></p>
+                <p className="mut">Exporte la vidéo en MP4 (H.264) et partage ce fichier-là.</p>
+              </> : <>
+                <p><strong>La vidéo ne se charge pas.</strong></p>
+                <p className="mut">Google Drive limite parfois la lecture d’un fichier (trop de requêtes en peu de temps, fichier très lourd) ou le partage « avec le lien » a été retiré. Réessaie dans quelques minutes.</p>
+                <button className="ghost sm" onClick={retryVideo}>Réessayer</button>
+              </>}
+            </div>
+          )}
+          {buffering && !videoErr && <div className="vbuf">Chargement…</div>}
           {probing && <div className="probe">Préparation de la vidéo…</div>}
           <div className="ov" style={{ left: box.x, top: box.y, width: box.w, height: box.h, pointerEvents: tool ? 'auto' : 'none', cursor: tool ? 'crosshair' : 'default' }}
             onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}>
             <svg viewBox="0 0 1 1" preserveAspectRatio="none">
               {visible.flatMap((c) => (c.shapes || []).map((s, i) => <Shape key={`${c.id}-${i}`} s={s} box={box} />))}
-              {shapes.map((s, i) => <Shape key={`d${i}`} s={s} box={box} />)}
+              {draftHere && shapes.map((s, i) => <Shape key={`d${i}`} s={s} box={box} />)}
               {draft && <Shape s={toShape(draft)} box={box} />}
             </svg>
             {visible.filter((c) => c.x != null).map((c) => (
               <div key={c.id} className="pin" style={{ left: `${c.x * 100}%`, top: `${c.y * 100}%` }}><b>{numberOf[c.id]}</b></div>
             ))}
-            {pin && <div className="pin draft" style={{ left: `${pin[0] * 100}%`, top: `${pin[1] * 100}%` }}><b>+</b></div>}
+ {pin && draftHere && <div className="pin draft" style={{ left: `${pin[0] * 100}%`, top: `${pin[1] * 100}%` }}><b>+</b></div>}
           </div>
         </div>
         {compareN && other && (
@@ -832,8 +927,9 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
         </div>
 
         <div className={`track ${pro ? 'pro' : ''}`} ref={track}
-          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); seekF(Math.floor(timeAt(e) * F)); }}
-          onPointerMove={(e) => { setHover({ x: e.clientX - e.currentTarget.getBoundingClientRect().left, t: timeAt(e) }); if (e.buttons === 1) seekF(Math.floor(timeAt(e) * F)); }}
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); scrubTo(Math.floor(timeAt(e) * F), true); }}
+          onPointerMove={(e) => { setHover({ x: e.clientX - e.currentTarget.getBoundingClientRect().left, t: timeAt(e) }); if (e.buttons === 1) scrubTo(Math.floor(timeAt(e) * F)); }}
+          onPointerUp={flushScrub}
           onPointerLeave={() => setHover(null)}>
           {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} top={pro ? 16 : 0} variant={waveStyle} tint={waveTint} stereo={stereoOn} />}
           {stereoOn && <><span className="lane-tag" style={{ top: pro ? 20 : 5 }}>G</span><span className="lane-tag" style={{ bottom: 5 }}>D</span></>}
@@ -920,16 +1016,20 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
           </div>
         )}
 
-        {((pro && isYt) || waving || peaksError) && (
+        {((pro && isYt) || waving || peaksError || (admin && !peaks && (isYt || needLocalWave)) || (admin && fileSize > 1.5e9)) && (
           <div className="notes">
-            {isYt && pro && <span>Vidéo YouTube : précision à l’image non garantie{peaks ? '' : ', pas d’onde sonore'}. Règle les images/s dans « Avancé » du tableau de bord.</span>}
-            {isYt && admin && pro && !peaks && (
-              <div>
-                <button className="ghost sm" onClick={(e) => e.currentTarget.nextSibling.click()}>Ajouter l’onde depuis le fichier source</button>
+            {isYt && pro && <span>Vidéo YouTube : précision à l’image non garantie{peaks ? '' : ', pas d’onde sonore'}.{admin ? ' Règle les images/s dans « Avancé » du tableau de bord.' : ''}</span>}
+            {admin && fileSize > 1.5e9 && (
+              <span>Fichier de {(fileSize / 1e9).toFixed(1).replace('.', ',')} Go : depuis Drive, la lecture et les sauts dans la timeline peuvent être lents, et Google bloque parfois temporairement. Pour les retours, partage plutôt une version allégée (1080p).</span>
+            )}
+            {admin && !peaks && !waving && (isYt || needLocalWave) && (
+              <div className="row" style={{ flexWrap: 'wrap' }}>
+                <button className="ghost sm" onClick={(e) => e.currentTarget.nextSibling.click()}>Ajouter l’onde sonore</button>
                 <input type="file" accept="video/*,audio/*" hidden onChange={peaksFromFile} />
+                <span>Choisis le fichier vidéo sur ton ordinateur : seul le son est lu, rien n’est envoyé.</span>
               </div>
             )}
-            {waving && <span>Création de l’onde sonore…</span>}
+            {waving && <span>Création de l’onde sonore… {waveMsg}</span>}
             {peaksError && (
               <span style={{ color: 'var(--gold)' }}>
                 L’onde n’a pas pu être enregistrée : elle disparaîtra au rechargement.{' '}
@@ -972,6 +1072,7 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
               <div className="cm-head">
                 <span>
                   <span className="num">{numberOf[c.id]}</span><span className="tc">{rangeLabel(c)}</span> · <strong>{c.author}</strong>
+                  <span className="when" title={new Date(c.created_at).toLocaleString('fr-BE')}>{fmtWhen(c.created_at)}</span>
                   {hasMarks(c) && <span className="tag">dessin</span>}
                 </span>
                 <span className="row" style={{ gap: 4 }} onClick={(e) => e.stopPropagation()}>
@@ -983,7 +1084,7 @@ export default function Review({ aid, title, admin, initialFps, initialPeaks, so
               <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>
               {kids(c.id).map((r) => (
                 <div key={r.id} className="reply">
-                  <strong>{r.author}</strong> <span className="mut">{new Date(r.created_at).toLocaleString('fr-BE', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                  <strong>{r.author}</strong> <span className="when">{fmtWhen(r.created_at)}</span>
                   <div style={{ whiteSpace: 'pre-wrap' }}>{r.body}</div>
                 </div>
               ))}

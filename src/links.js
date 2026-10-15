@@ -43,3 +43,13 @@ export async function checkYouTube(id) {
 const DRIVE_KEY = import.meta.env.VITE_DRIVE_API_KEY || firebaseConfig.apiKey;
 export const driveUrl = (id) => `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${DRIVE_KEY}`;
 export const videoUrl = (source, videoId) => (source === 'drive' ? driveUrl(videoId) : null);
+
+// Métadonnées d'un fichier Drive public (taille, durée) : une petite requête JSON, sans télécharger la vidéo.
+export async function driveMeta(id) {
+  try {
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=name,size,videoMediaMetadata&key=${DRIVE_KEY}`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return { name: j.name, size: Number(j.size) || null };
+  } catch { return null; }
+}
