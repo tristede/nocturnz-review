@@ -1,0 +1,86 @@
+rules_version = '2';
+
+// Qui peut faire quoi :
+//  - les « hôtes » (Gmail listés dans config/hosts, jamais lisible côté client) créent et gèrent leurs reviews ;
+//  - un invité lit et commente une review à condition qu'elle soit active (ni désactivée, ni expirée) :
+//      · access = 'link'   : quiconque connaît le lien (l'identifiant du document est le secret) ;
+//      · access = 'invite' : seulement les Gmail listés, connectés avec Google (e-mail vérifié) ;
+//  - un invité ne peut jamais modifier que : le statut « résolu » d'un commentaire et la validation d'une version.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function verified() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function isHost() {
+      return verified()
+        && request.auth.token.email.lower() in get(/databases/$(database)/documents/config/hosts).data.emails;
+    }
+    function owns(a) { return isHost() && a.owner == request.auth.uid; }
+    function live(a) { return a.revoked != true && (a.expiresAt == null || a.expiresAt > request.time); }
+    function invitedOk(a) {
+      return a.access != 'invite' || (verified() && request.auth.token.email.lower() in a.invited);
+    }
+    function viewable(a) { return live(a) && invitedOk(a); }
+    function assetOf(aid) { return get(/databases/$(database)/documents/assets/$(aid)).data; }
+    function canRead(aid) { return owns(assetOf(aid)) || viewable(assetOf(aid)); }
+
+    // la liste des hôtes ne passe jamais par un client (gérée avec le script scripts/seed-hosts.mjs)
+    match /config/{doc} {
+      allow read, write: if false;
+    }
+
+    match /assets/{aid} {
+      allow get: if owns(resource.data) || viewable(resource.data);
+      // « list » exige where('owner', '==', uid) : on ne peut jamais énumérer les reviews des autres
+      allow list: if owns(resource.data);
+      allow create: if isHost()
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.keys().hasOnly(['title', 'owner', 'created', 'expiresAt', 'revoked', 'access', 'invited'])
+        && request.resource.data.title is string && request.resource.data.title.size() <= 120
+        && request.resource.data.access in ['link', 'invite']
+        && request.resource.data.invited is list && request.resource.data.invited.size() <= 50;
+      allow update: if owns(resource.data)
+        && request.resource.data.owner == resource.data.owner
+        && request.resource.data.access in ['link', 'invite']
+        && request.resource.data.invited is list && request.resource.data.invited.size() <= 50;
+      allow delete: if owns(resource.data);
+
+      match /versions/{vid} {
+        allow read: if canRead(aid);
+        allow create, delete: if owns(assetOf(aid));
+        allow update: if owns(assetOf(aid))
+          || (viewable(assetOf(aid))
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'statusBy', 'statusAt'])
+              && (request.resource.data.status == null || request.resource.data.status in ['approved', 'changes'])
+              && (request.resource.data.statusBy == null
+                  || (request.resource.data.statusBy is string && request.resource.data.statusBy.size() <= 60)));
+
+        match /comments/{cid} {
+          allow read: if canRead(aid);
+          allow create: if canRead(aid)
+            && request.resource.data.keys().hasOnly(['author', 'body', 't', 'tEnd', 'x', 'y', 'shapes', 'parentId', 'resolved', 'created'])
+            && request.resource.data.keys().hasAll(['author', 'body', 't', 'tEnd', 'x', 'y', 'shapes', 'parentId', 'resolved', 'created'])
+            && request.resource.data.author is string
+            && request.resource.data.author.size() >= 1 && request.resource.data.author.size() <= 60
+            && request.resource.data.body is string
+            && request.resource.data.body.size() >= 1 && request.resource.data.body.size() <= 2000
+            && request.resource.data.t is number && request.resource.data.t >= 0 && request.resource.data.t < 86400
+            && (request.resource.data.tEnd == null
+                || (request.resource.data.tEnd is number && request.resource.data.tEnd > request.resource.data.t && request.resource.data.tEnd < 86400))
+            && (request.resource.data.x == null || (request.resource.data.x is number && request.resource.data.x >= 0 && request.resource.data.x <= 1))
+            && (request.resource.data.y == null || (request.resource.data.y is number && request.resource.data.y >= 0 && request.resource.data.y <= 1))
+            && (request.resource.data.shapes == null
+                || (request.resource.data.shapes is string && request.resource.data.shapes.size() <= 60000))
+            && (request.resource.data.parentId == null || request.resource.data.parentId is string)
+            && request.resource.data.resolved == false
+            && request.resource.data.created == request.time;
+          allow update: if canRead(aid)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['resolved'])
+            && request.resource.data.resolved is bool;
+          allow delete: if owns(assetOf(aid));
+        }
+      }
+    }
+  }
+}

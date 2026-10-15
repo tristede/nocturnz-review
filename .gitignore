@@ -1,7 +1,9 @@
 node_modules
-.next
+dist
+.firebase
+*.log
 .env.local
-data
-.claude
-*.bak*
+.env*.local
 .DS_Store
+.claude
+data

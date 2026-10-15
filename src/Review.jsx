@@ -1,6 +1,7 @@
-'use client';
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useNavigate } from 'react-router-dom';
+import * as data from './data';
+import { videoUrl } from './links';
 
 const COLORS = ['#ff4d4d', '#ffb020', '#3ecf8e', '#4da3ff', '#ffffff'];
 const TOOLS = [['arrow', 'Flèche'], ['pen', 'Crayon'], ['circle', 'Cercle'], ['rect', 'Rectangle'], ['pin', 'Repère']];
@@ -248,9 +249,9 @@ function createYtShim({ host, videoId, box, onDuration, onState, onTime }) {
   return { shim, destroy() { dead = true; clearInterval(poll); try { player?.destroy(); } catch {} host.remove(); } };
 }
 
-export default function Review({ token, title, admin, initialFps, initialPeaks, source, videoId, assetToken, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
+export default function Review({ aid, title, admin, initialFps, initialPeaks, source, videoId, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
   const isYt = source === 'youtube';
-  const router = useRouter();
+  const navigate = useNavigate();
   const [approval, setApproval] = useState(initialStatus);
   const [needName, setNeedName] = useState(false);
   const [ratio, setRatio] = useState(16 / 9);  // ratio réel de la vidéo (16:9 par défaut)
@@ -328,10 +329,8 @@ export default function Review({ token, title, admin, initialFps, initialPeaks, 
   const rangeLabel = (c) => (c.t_end ? `${label(c.t)} → ${label(c.t_end)}` : label(c.t));
   const curF = frameOf(now);
 
-  const load = useCallback(async () => {
-    const r = await fetch(`/api/comments?token=${token}`, { cache: 'no-store' });
-    if (r.ok) setComments((await r.json()).map(parse));
-  }, [token]);
+  // les commentaires arrivent en temps réel (Firestore) : plus rien à recharger après une action
+  useEffect(() => data.subscribeComments(aid, currentN, (list) => setComments(list.map(parse)), () => {}), [aid, currentN]);
 
   useEffect(() => {
     try {
@@ -342,14 +341,11 @@ export default function Review({ token, title, admin, initialFps, initialPeaks, 
       const ws = localStorage.getItem('review-wave'); if (WAVE_STYLES.some(([k]) => k === ws)) setWaveStyle(ws);
       if (localStorage.getItem('review-wavetint') === 'flat') setWaveTint('flat');
       if (localStorage.getItem('review-wavech') === 'stereo') setWaveChannels('stereo');
-      if (!initialFps) { const f = Number(localStorage.getItem(`fps:${token}`)); if (f) setFps(f); }
+      if (!initialFps) { const f = Number(localStorage.getItem(`fps:${aid}:${currentN}`)); if (f) setFps(f); }
     } catch {}
     const c = new URLSearchParams(location.search).get('c');
-    if (c) deepLink.current = Number(c);
-    load();
-    const i = setInterval(load, 5000);
-    return () => clearInterval(i);
-  }, [load, token, initialFps]);
+    if (c) deepLink.current = c;
+  }, [aid, currentN, initialFps]);
 
   // pas d'effet de bord dans les updaters React (ils peuvent être rejoués)
   const setStepTo = useCallback((n) => {
@@ -431,8 +427,8 @@ export default function Review({ token, title, admin, initialFps, initialPeaks, 
       const val = f || 25;
       setFps(val);
       if (f) {
-        try { localStorage.setItem(`fps:${token}`, String(f)); } catch {}
-        if (admin) fetch('/api/fps', { method: 'POST', body: JSON.stringify({ token, fps: f }) });
+        try { localStorage.setItem(`fps:${aid}:${currentN}`, String(f)); } catch {}
+        if (admin) data.saveVersion(aid, currentN, { fps: f }).catch(() => {});
       }
     }
   };
@@ -559,8 +555,9 @@ export default function Review({ token, title, admin, initialFps, initialPeaks, 
   // enregistre l'onde sur le serveur et le confirme ; sinon l'avertit (elle disparaîtrait au rechargement)
   const savePeaks = async (p) => {
     try {
-      const r = await fetch('/api/peaks', { method: 'POST', body: JSON.stringify({ token, peaks: encodePeaks(p) }) });
-      if (r.ok) { setPeaksError(false); return true; }
+      await data.saveVersion(aid, currentN, { peaks: encodePeaks(p) });
+      setPeaksError(false);
+      return true;
     } catch {}
     setPeaksError(true);
     return false;
@@ -580,7 +577,7 @@ export default function Review({ token, title, admin, initialFps, initialPeaks, 
         }
       } finally { setWaving(false); }
     })();
-  }, [admin, peaks, dur, token]);
+  }, [admin, peaks, dur, aid, currentN]);
 
   // YouTube : onde calculée depuis le fichier source de l'admin (local, jamais envoyé), seuls les pics sont enregistrés
   const peaksFromFile = async (e) => {
@@ -635,28 +632,25 @@ export default function Review({ token, title, admin, initialFps, initialPeaks, 
 
   const resetDraft = () => { setBody(''); setEndF(null); setTool(null); setToolsOpen(false); setPin(null); setShapes([]); setDraft(null); };
 
-  const post = (payload) => fetch('/api/comments', { method: 'POST', body: JSON.stringify({ token, author: name, ...payload }) });
+  const post = (payload) => data.addComment(aid, currentN, { author: name, ...payload });
   const remember = () => { try { localStorage.setItem('review-name', name); } catch {} setNameOk(true); setEditName(false); };
 
   const send = async () => {
     if (!body.trim() || !name.trim()) return;
     remember();
-    await post({ body, t: stampF / F, t_end: endF != null ? endF / F : null, x: pin?.[0], y: pin?.[1], shapes });
+    try { await post({ body, t: stampF / F, t_end: endF != null ? endF / F : null, x: pin?.[0], y: pin?.[1], shapes }); } catch { alert('Le commentaire n’a pas pu être envoyé (accès refusé ou review désactivée).'); return; }
     resetDraft();
-    load();
   };
   const sendReply = async () => {
     if (!replyText.trim() || !name.trim()) return;
     remember();
-    await post({ body: replyText, parent_id: replyTo });
+    try { await post({ body: replyText, parent_id: replyTo }); } catch { alert('La réponse n’a pas pu être envoyée.'); return; }
     setReplyText(''); setReplyTo(null);
-    load();
   };
   // validation de la version : approuver, demander des modifications, ou annuler
   const setReview = async (st) => {
     if (st && !name.trim()) { setEditName(true); setNeedName(true); return; }
-    const r = await fetch('/api/approval', { method: 'POST', body: JSON.stringify({ token, status: st, author: name }) });
-    if (!r.ok) return;
+    try { await data.setApproval(aid, currentN, st, name.trim()); } catch { return; }
     if (st) remember();
     setNeedName(false);
     setApproval(st ? { status: st, by: name.trim(), at: Date.now() } : null);
@@ -672,17 +666,15 @@ export default function Review({ token, title, admin, initialFps, initialPeaks, 
     const pick = currentN === latestN ? others[others.length - 1] : others.find((x) => x.n === latestN) || others[others.length - 1];
     if (pick) setCmp(pick.n);
   };
-  const goVersion = (n) => router.push(`/r/${assetToken}?v=${n}${compareN && compareN !== n ? `&cmp=${compareN}` : ''}`);
+  const goVersion = (n) => navigate(`/r/${aid}?v=${n}${compareN && compareN !== n ? `&cmp=${compareN}` : ''}`);
   const fmtDay = (t) => new Date(t).toLocaleDateString('fr-BE', { day: 'numeric', month: 'short' });
 
   const toggle = async (c) => {
-    await fetch('/api/comments', { method: 'PATCH', body: JSON.stringify({ id: c.id, resolved: !c.resolved }) });
-    load();
+    data.setResolved(aid, currentN, c.id, !c.resolved).catch(() => {});
   };
   const del = async (c) => {
     if (!confirm('Supprimer ce commentaire ?')) return;
-    await fetch(`/api/comments?id=${c.id}`, { method: 'DELETE' });
-    load();
+    data.deleteComment(aid, currentN, c.id).catch(() => {});
   };
   const copyLink = (c) => { try { navigator.clipboard.writeText(`${location.origin}${location.pathname}?c=${c.id}`); } catch {} };
   const playPause = () => { const v = vid.current; v.paused ? v.play() : v.pause(); };
@@ -803,7 +795,7 @@ export default function Review({ token, title, admin, initialFps, initialPeaks, 
               <div className="ytframe" ref={ytWrap} />
               <div className="ytshield" onClick={playPause} />
             </>
-          ) : <video ref={vid} src={`/api/stream/${token}`} preload="metadata" playsInline
+          ) : <video ref={vid} src={videoUrl(source, videoId)} preload="metadata" playsInline
             onClick={playPause}
             onLoadedMetadata={(e) => onMeta(e.currentTarget)}
             onTimeUpdate={(e) => setNow(e.currentTarget.currentTime)}
@@ -832,7 +824,7 @@ export default function Review({ token, title, admin, initialFps, initialPeaks, 
                 <div className="ytframe" ref={slaveYtWrap} />
                 <div className="ytshield" onClick={playPause} />
               </>
-            ) : <video ref={slaveRef} src={`/api/stream/${other.token}`} muted playsInline preload="metadata"
+            ) : <video ref={slaveRef} src={videoUrl(other.source, other.videoId)} muted playsInline preload="metadata"
               onClick={playPause}
               onLoadedMetadata={(e) => setSlaveDur(e.currentTarget.duration)} />}
           </div>
