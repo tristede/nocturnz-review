@@ -45,6 +45,8 @@ export const driveUrl = (id) => `https://www.googleapis.com/drive/v3/files/${id}
 // vignette publique (sans clé) ; peut échouer, l'image est alors simplement masquée
 export const thumbUrl = (source, id) =>
   source === 'youtube' ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : `https://drive.google.com/thumbnail?id=${id}&sz=w480`;
+// lecteur intégré de Google Drive (sans clé) : secours quand la lecture directe est refusée
+export const driveEmbedUrl = (id) => `https://drive.google.com/file/d/${id}/preview`;
 export const videoUrl = (source, videoId) => (source === 'drive' ? driveUrl(videoId) : null);
 
 // Google Docs / Slides / Sheets / Drawings : Drive les exporte en PDF (fichiers de moins de 10 Mo)
@@ -58,10 +60,11 @@ export const fileUrl = (v) => (import.meta.env.VITE_EMULATORS && v.videoId.start
 // `denied` = Drive a répondu mais refuse (fichier privé, supprimé, lien faux) ; null = réseau.
 export async function driveMeta(id) {
   try {
-    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=name,size,mimeType&key=${DRIVE_KEY}`);
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=name,size,mimeType,videoMediaMetadata&key=${DRIVE_KEY}`);
     if (!r.ok) return { denied: true, status: r.status };
     const j = await r.json();
-    return { name: j.name, size: Number(j.size) || null, mimeType: j.mimeType || '' };
+    const ms = Number(j.videoMediaMetadata?.durationMillis) || null;
+    return { name: j.name, size: Number(j.size) || null, mimeType: j.mimeType || '', duration: ms ? ms / 1000 : null };
   } catch { return null; }
 }
 

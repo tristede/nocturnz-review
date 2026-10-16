@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as data from './data';
-import { videoUrl, driveMeta } from './links';
+import { videoUrl, driveMeta, driveEmbedUrl } from './links';
 import { peaksFromLocalMp4 } from './audioPeaks';
 import { COLORS, TOOLS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause, IconChevron } from './draw';
 
@@ -224,6 +224,25 @@ function createYtShim({ host, videoId, box, onDuration, onState, onTime }) {
   return { shim, destroy() { dead = true; clearInterval(poll); try { player?.destroy(); } catch {} host.remove(); } };
 }
 
+// moment saisi à la main (lecteur Google) : « 12:34 », « 1:02:03 » ou « 00:12:34:10 » (dernier champ = image)
+function TimeField({ value, label, onSet }) {
+  const [text, setText] = useState(null);
+  const parse = (str) => {
+    const p = str.trim().split(/[:.,\s]+/).map(Number);
+    if (!p.length || p.some((n) => !Number.isFinite(n))) return null;
+    if (p.length === 4) return p[0] * 3600 + p[1] * 60 + p[2] + p[3] / 100; // h:m:s:image (approx., recalé à l'image par seekT)
+    return p.reduce((t, n) => t * 60 + n, 0);
+  };
+  const commit = () => { const t = text == null ? null : parse(text); if (t != null) onSet(t); setText(null); };
+  return (
+    <label className="timefield" title="Tape le moment affiché dans le lecteur Google">
+      <span className="mut">Moment</span>
+      <input value={text ?? label(value)} onChange={(e) => setText(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); e.currentTarget.blur(); } }} />
+    </label>
+  );
+}
+
 export default function Review({ aid, title, admin, back = null, initialFps, initialPeaks, source, videoId, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
   const isYt = source === 'youtube';
   const navigate = useNavigate();
@@ -266,6 +285,9 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
   const [waveMsg, setWaveMsg] = useState('');
   const [videoErr, setVideoErr] = useState(false);          // 'drive' (partage retiré…), 'quota' (Drive limite le fichier) ou 'format' (codec illisible)
   const [buffering, setBuffering] = useState(false);
+  const [embed, setEmbed] = useState(false);                // lecteur Google intégré (secours) : pas de contrôle de la lecture
+  const [errDetail, setErrDetail] = useState('');            // raison donnée par Google, pour comprendre un refus
+  const [driveDur, setDriveDur] = useState(0);              // durée lue dans les métadonnées Drive (pour le lecteur Google)
   const [fileSize, setFileSize] = useState(null);           // taille du fichier Drive (pour prévenir l'hôte)
   const [waveStyle, setWaveStyle] = useState('bars');
   const [waveTint, setWaveTint] = useState('vol');
@@ -385,7 +407,11 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
     const sc = scrub.current;
     clearTimeout(sc.timer); sc.pending = null; sc.last = performance.now(); // tout déplacement annule le scrub en attente
     const v = vid.current;
-    if (!v) return;
+    if (!v) { // lecteur Google : on ne pilote pas la vidéo, seule la tête (le moment du commentaire) bouge
+      const m = Math.max(0, Math.ceil((durRef.current || 0) * Ff.current) - 1);
+      setNow((clamp(f, 0, m) + 0.5) / Ff.current);
+      return;
+    }
     const max = Math.max(0, Math.ceil((v.duration || 0) * Ff.current) - 1);
     const t = (clamp(f, 0, max) + 0.5) / Ff.current;
     v.pause();
@@ -398,7 +424,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
   const scrubTo = useCallback((f, final = false) => {
     const sc = scrub.current;
     clearTimeout(sc.timer);
-    f = clamp(f, 0, Math.max(0, Math.ceil((vid.current?.duration || 0) * Ff.current) - 1));
+    f = clamp(f, 0, Math.max(0, Math.ceil((vid.current?.duration || durRef.current || 0) * Ff.current) - 1));
     if (final || performance.now() - sc.last > 250) { seekF(f); return; }
     sc.pending = f;
     setNow((f + 0.5) / Ff.current); // la tête de lecture suit tout de suite
@@ -406,7 +432,8 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
   }, [seekF]);
   const flushScrub = useCallback(() => { const p = scrub.current.pending; if (p != null) seekF(p); }, [seekF]);
   useEffect(() => () => clearTimeout(scrub.current.timer), []);
-  const stepF = useCallback((d) => seekF((scrub.current.pending ?? Math.floor(vid.current.currentTime * Ff.current + 1e-4)) + d), [seekF]);
+  const nowRef = useRef(0); nowRef.current = now;
+  const stepF = useCallback((d) => seekF((scrub.current.pending ?? Math.floor((vid.current ? vid.current.currentTime : nowRef.current) * Ff.current + 1e-4)) + d), [seekF]);
   // flèches : pas selon le mode choisi, Maj = l'autre mode le temps d'un appui
   const stepBy = useCallback((dir, invert = false, held = false) => {
     const perFrame = (stepRef.current === 'frame') !== invert;
@@ -572,10 +599,18 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
     return () => { dead = true; };
   }, [source, videoId, admin]);
 
+  // lecteur Google : la durée vient des métadonnées Drive (le lecteur intégré ne la donne pas)
+  useEffect(() => {
+    if (!embed) return;
+    let dead = false;
+    driveMeta(videoId).then((m) => { if (!dead && m?.duration) { setDriveDur(m.duration); setDur(m.duration); } });
+    return () => { dead = true; };
+  }, [embed, videoId]);
+
   const AUTO_WAVE_MAX = 300e6; // au-delà, télécharger tout le fichier pour en extraire le son n'est pas raisonnable
   const wavedRef = useRef(false);
   useEffect(() => {
-    if (isYt || !admin || peaks || wavedRef.current || !Number.isFinite(dur) || dur <= 0) return;
+    if (isYt || embed || !admin || peaks || wavedRef.current || !Number.isFinite(dur) || dur <= 0) return;
     if (source === 'drive' && fileSize == null) return; // on attend la taille
     wavedRef.current = true;
     if (fileSize > AUTO_WAVE_MAX) { setNeedLocalWave(true); return; }
@@ -700,10 +735,13 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
     try {
       const r = await fetch(videoUrl(source, videoId), { headers: { Range: 'bytes=0-1' } });
       if (!r.ok) {
-        const reason = (await r.json().catch(() => null))?.error?.errors?.[0]?.reason;
+        const j = await r.json().catch(() => null);
+        const reason = j?.error?.errors?.[0]?.reason;
+        setErrDetail(j?.error?.message ? `Google : ${j.error.message}` : `Google : erreur ${r.status}`);
         return setVideoErr(reason === 'downloadQuotaExceeded' ? 'quota' : 'drive');
       }
-    } catch {}
+      setErrDetail('Le fichier répond, mais ce navigateur n’arrive pas à le lire.');
+    } catch { setErrDetail('Google ne répond pas (blocage temporaire ou protection du navigateur).'); }
     setVideoErr('drive');
   };
   const retryVideo = () => {
@@ -843,7 +881,9 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
         <div className={`vstage ${compareN ? 'two' : ''}`} ref={vstage}>
         <div className="vwrap" ref={wrap} style={fit ? { width: fit.w, height: fit.h } : undefined}>
           {compareN && <span className="pane-tag">v{currentN}</span>}
-          {isYt ? (
+          {embed ? (
+            <iframe className="gframe" src={driveEmbedUrl(videoId)} title="Lecteur Google Drive" allow="autoplay; fullscreen" allowFullScreen />
+          ) : isYt ? (
             <>
               <div className="ytframe" ref={ytWrap} />
               <div className="ytshield" onClick={playPause} />
@@ -861,25 +901,33 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
             onPlaying={() => { setBuffering(false); setVideoErr(false); }}
             onLoadedData={() => setVideoErr(false)}
             onCanPlay={() => { setBuffering(false); setVideoErr(false); }} />}
-          {videoErr && (
+          {videoErr && !embed && (
             <div className="vmsg">
               {videoErr === 'format' ? <>
                 <p><strong>Ce format ne se lit pas dans le navigateur.</strong></p>
                 <p className="mut">Exporte la vidéo en MP4 (H.264) et partage ce fichier-là.</p>
               </> : videoErr === 'quota' ? <>
                 <p><strong>Google Drive bloque ce fichier pour aujourd’hui.</strong></p>
-                <p className="mut">Il a été trop téléchargé en 24 h (c’est vite le cas pour un fichier lourd). Ça se débloque tout seul dans la journée. En attendant, partage une version allégée (1080p) ou un lien YouTube non répertorié.</p>
-                <button className="ghost sm" onClick={retryVideo}>Réessayer</button>
+                <p className="mut">Il a été trop téléchargé en 24 h (c’est vite le cas pour un fichier lourd). Le lecteur Google, lui, marche encore : la vidéo se lit, mais sans précision à l’image ni dessin.</p>
+                <div className="row" style={{ justifyContent: 'center' }}>
+                  <button className="sm" onClick={() => { setEmbed(true); setVideoErr(false); }}>Lire avec le lecteur Google</button>
+                  <button className="ghost sm" onClick={retryVideo}>Réessayer</button>
+                </div>
+                {errDetail && <p className="mut detail">{errDetail}</p>}
               </> : <>
                 <p><strong>La vidéo ne se charge pas.</strong></p>
-                <p className="mut">Google Drive limite parfois la lecture d’un fichier (trop de requêtes en peu de temps, fichier très lourd) ou le partage « avec le lien » a été retiré. Réessaie dans quelques minutes.</p>
-                <button className="ghost sm" onClick={retryVideo}>Réessayer</button>
+                <p className="mut">Google Drive limite parfois la lecture directe (fichier très lourd, trop de requêtes) ou le navigateur la bloque. Le lecteur Google marche dans la plupart des cas : la vidéo se lit, mais sans précision à l’image ni dessin.</p>
+                <div className="row" style={{ justifyContent: 'center' }}>
+                  <button className="sm" onClick={() => { setEmbed(true); setVideoErr(false); }}>Lire avec le lecteur Google</button>
+                  <button className="ghost sm" onClick={retryVideo}>Réessayer</button>
+                </div>
+                {errDetail && <p className="mut detail">{errDetail}</p>}
               </>}
             </div>
           )}
           {buffering && !videoErr && <div className="vbuf">Chargement…</div>}
-          {probing && <div className="probe">Préparation de la vidéo…</div>}
-          <div className="ov" style={{ left: box.x, top: box.y, width: box.w, height: box.h, pointerEvents: tool ? 'auto' : 'none', cursor: tool ? 'crosshair' : 'default' }}
+          {probing && !embed && <div className="probe">Préparation de la vidéo…</div>}
+          {!embed && <div className="ov" style={{ left: box.x, top: box.y, width: box.w, height: box.h, pointerEvents: tool ? 'auto' : 'none', cursor: tool ? 'crosshair' : 'default' }}
             onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}>
             <svg viewBox="0 0 1 1" preserveAspectRatio="none">
               {visible.flatMap((c) => (c.shapes || []).map((s, i) => <Shape key={`${c.id}-${i}`} s={s} box={box} />))}
@@ -890,7 +938,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
               <div key={c.id} className="pin" style={{ left: `${c.x * 100}%`, top: `${c.y * 100}%` }}><b>{numberOf[c.id]}</b></div>
             ))}
  {pin && draftHere && <div className="pin draft" style={{ left: `${pin[0] * 100}%`, top: `${pin[1] * 100}%` }}><b>+</b></div>}
-          </div>
+          </div>}
         </div>
         {compareN && other && (
           <div className="vwrap" ref={slaveWrap} style={fit ? { width: fit.w, height: fit.h } : undefined}>
@@ -928,14 +976,21 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
         </div>
 
         <div className="transport">
-          <button className="play" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}>{playing ? <IconPause /> : <IconPlay />}</button>
+          {!embed && <button className="play" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}>{playing ? <IconPause /> : <IconPlay />}</button>}
           {pro && <button className="ghost icon" title="Reculer (←)" aria-label="Reculer" onClick={() => stepBy(-1)}><IconChevron dir="left" /></button>}
           {pro && <button className="ghost icon" title="Avancer (→)" aria-label="Avancer" onClick={() => stepBy(1)}><IconChevron dir="right" /></button>}
-          <div className="timecode"><span className="cur">{label(now)}</span><span className="tot">/ {label(dur || 0)}</span></div>
+          {embed
+            ? <TimeField value={now} label={label} onSet={seekT} />
+            : <div className="timecode"><span className="cur">{label(now)}</span><span className="tot">/ {label(dur || 0)}</span></div>}
           <div className="spacer" />
           {pro && <span className="meta">{F} images/s</span>}
-          <button className={toolsOpen ? 'ghost on' : 'ghost'} onClick={toggleTools}>Dessiner</button>
+          {embed
+            ? <button className="ghost sm" onClick={() => { setEmbed(false); setDur(0); }} title="Revenir à la lecture précise">Lecture directe</button>
+            : <button className={toolsOpen ? 'ghost on' : 'ghost'} onClick={toggleTools}>Dessiner</button>}
         </div>
+        {embed && (
+          <div className="notes"><span>Lecteur Google : la timeline ne suit pas la vidéo. Pour commenter, place la tête de lecture (ou tape le moment affiché dans le lecteur) puis écris ton commentaire. Cliquer un commentaire déplace la tête, pas la vidéo.</span></div>
+        )}
 
         {toolsOpen && (
           <div className="tools">
@@ -1094,8 +1149,8 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
             : <div className="compose-who mut">Tu commentes en tant que&nbsp;<strong style={{ color: 'var(--txt)' }}>{name}</strong>&nbsp;·&nbsp;<button className="link" style={{ padding: 0 }} onClick={() => setEditName(true)}>changer</button></div>}
           {pro && (
             <div className="row" style={{ flexWrap: 'wrap' }}>
-              <button className="ghost sm" onClick={() => { vid.current.pause(); setStampF(curF); if (endF != null && endF <= curF) setEndF(null); }}>In {label(stampF / F)}</button>
-              <button className="ghost sm" onClick={() => { vid.current.pause(); if (curF > stampF) setEndF(curF); }}>Out {endF != null ? label(endF / F) : '—'}</button>
+              <button className="ghost sm" onClick={() => { vid.current?.pause(); setStampF(curF); if (endF != null && endF <= curF) setEndF(null); }}>In {label(stampF / F)}</button>
+              <button className="ghost sm" onClick={() => { vid.current?.pause(); if (curF > stampF) setEndF(curF); }}>Out {endF != null ? label(endF / F) : '—'}</button>
               {endF != null && <button className="link" style={{ padding: 0 }} onClick={() => setEndF(null)}>retirer la plage</button>}
             </div>
           )}
