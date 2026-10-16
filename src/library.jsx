@@ -1,7 +1,8 @@
 // Éléments communs au tableau de bord et aux pages projet : cartes de review, partage, ajout d'un lien.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as data from './data';
+import { ACCEPTED, APP_ICONS } from './appIcons';
 import { KIND_LABEL, checkYouTube, driveMeta, kindOf, parseLink, thumbUrl } from './links';
 
 const DAY = 86_400_000;
@@ -98,9 +99,50 @@ export function LinkLine({ item, path, setMsg }) {
 }
 
 // formulaire « titre + lien » ; project = id du projet où ranger la review (ou null)
+// rangée d'icônes des formats acceptés ; celles du lien collé s'allument
+function Accepted({ link }) {
+  const [det, setDet] = useState(null); // { source, kind, svg, name } | { checking } | { error }
+  useEffect(() => {
+    const l = parseLink(link);
+    if (!l) { setDet(link.trim() ? { error: 'Lien non reconnu' } : null); return; }
+    if (l.source === 'youtube') { setDet({ source: 'youtube', kind: 'video' }); return; }
+    setDet({ source: 'drive', checking: true });
+    let dead = false;
+    const t = setTimeout(async () => {
+      const m = await driveMeta(l.videoId);
+      if (dead) return;
+      if (!m) return setDet({ source: 'drive', error: 'Drive ne répond pas' });
+      if (m.denied) return setDet({ source: 'drive', error: 'Fichier non partagé « avec le lien »' });
+      const kind = kindOf(m.mimeType, m.name);
+      setDet(kind
+        ? { source: 'drive', kind, name: m.name, svg: m.mimeType === 'image/svg+xml' || /\.svg$/i.test(m.name) }
+        : { source: 'drive', error: `${m.name} : format non pris en charge` });
+    }, 400);
+    return () => { dead = true; clearTimeout(t); };
+  }, [link]);
+
+  const lit = det && !det.error && !det.checking;
+  const caption = !det ? 'Vidéo, image, SVG, PDF, Word, Photoshop ou Google Docs, depuis Drive ou YouTube'
+    : det.error ? det.error
+    : det.checking ? 'Vérification du fichier…'
+    : det.source === 'youtube' ? 'Vidéo YouTube'
+    : `${det.name} · ${ACCEPTED.find((a) => a.key !== 'drive' && a.match(det))?.label || ''}`;
+  return (
+    <div className={`accepted ${det ? 'has' : ''}`}>
+      <div className="app-icons">
+        {ACCEPTED.map((a) => (
+          <span key={a.key} className={`app-ic ${lit ? (a.match(det) ? 'on' : 'off') : ''}`} title={a.label}>{APP_ICONS[a.key]}</span>
+        ))}
+      </div>
+      <span className={`mut ${det?.error ? 'warn' : ''}`}>{caption}</span>
+    </div>
+  );
+}
+
 export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState('');
   const add = async (e) => {
     e.preventDefault();
     const form = e.currentTarget, f = new FormData(form);
@@ -112,6 +154,7 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
         project: projects ? f.get('project') || null : project,
       });
       form.reset();
+      setLink('');
       await onDone();
     } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   };
@@ -120,7 +163,7 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
       <form onSubmit={add} style={{ display: 'grid', gap: 8 }}>
         <input name="title" placeholder="Titre (facultatif : sinon le nom du fichier)" />
         <div className="row">
-          <input name="link" placeholder="Lien Drive (vidéo, image, PDF, Word, PSD…) ou YouTube" required />
+          <input name="link" placeholder="Colle un lien Google Drive ou YouTube" required value={link} onChange={(e) => setLink(e.target.value)} />
           {projects?.length > 0 && (
             <select name="project" defaultValue="" title="Ranger dans un projet">
               <option value="">Sans projet</option>
@@ -129,6 +172,7 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
           )}
           <button disabled={busy}>{busy ? '…' : 'Ajouter'}</button>
         </div>
+        <Accepted link={link} />
       </form>
       {err && <span className="mut">{err}</span>}
     </div>

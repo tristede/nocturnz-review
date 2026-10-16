@@ -259,3 +259,14 @@ a.vtitle:hover { text-decoration: underline; }
 .pages button.on { background: rgba(142, 123, 255, .2); border-color: rgba(142, 123, 255, .55); color: #fff; }
 .pages button i { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 2px; background: var(--gold); }
 .cm-head button { white-space: nowrap; }
+
+/* formats acceptés sous le champ lien */
+.accepted { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 2px; }
+.app-icons { display: flex; gap: 6px; }
+.app-ic { width: 24px; height: 24px; display: block; border-radius: 7px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 6px 14px -8px rgba(0, 0, 0, .9); transition: opacity .2s, transform .2s, filter .2s; }
+.app-ic svg { display: block; }
+.app-ic.off { opacity: .22; filter: grayscale(1); }
+.app-ic.on { transform: translateY(-2px); box-shadow: 0 0 0 1.5px rgba(142, 123, 255, .9), 0 8px 18px -8px rgba(124, 104, 240, .9); }
+.accepted .mut { font-size: 12px; }
+.accepted .warn { color: var(--gold); }
+@media (max-width: 560px) { .app-ic { width: 22px; height: 22px; } }
