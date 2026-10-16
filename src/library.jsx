@@ -131,7 +131,7 @@ function Accepted({ link }) {
     <div className={`accepted ${det ? 'has' : ''}`}>
       <div className="app-icons">
         {ACCEPTED.map((a) => (
-          <span key={a.key} className={`app-ic ${lit ? (a.match(det) ? 'on' : 'off') : ''}`} title={a.label} style={{ '--tint': APP_ICONS[a.key].tint }}>
+          <span key={a.key} className={`app-ic ${lit ? (a.match(det) ? 'on' : 'off') : ''}`} title={a.label}>
             {APP_ICONS[a.key].glyph}
           </span>
         ))}

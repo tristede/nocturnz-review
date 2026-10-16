@@ -260,40 +260,42 @@ a.vtitle:hover { text-decoration: underline; }
 .pages button i { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 2px; background: var(--gold); }
 .cm-head button { white-space: nowrap; }
 
-/* formats acceptés sous le champ lien : icônes « liquid glass » */
+/* formats acceptés sous le champ lien : icônes « liquid glass » grises (verre fumé, logos en niveaux de gris) */
 .accepted { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding-top: 4px; }
 .app-icons { display: flex; gap: 7px; }
 .app-ic {
-  --tint: #8e7bff;
   position: relative; width: 28px; height: 28px; display: block; padding: 3px; border-radius: 9px; overflow: hidden; isolation: isolate;
-  /* verre : dégradé translucide + teinte de l'app, flou de l'arrière-plan */
   background:
-    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, .28), rgba(255, 255, 255, 0) 55%),
-    linear-gradient(160deg, color-mix(in srgb, var(--tint) 30%, transparent), color-mix(in srgb, var(--tint) 8%, transparent) 70%),
-    rgba(255, 255, 255, .05);
-  -webkit-backdrop-filter: blur(12px) saturate(170%); backdrop-filter: blur(12px) saturate(170%);
-  border: 1px solid rgba(255, 255, 255, .22);
+    radial-gradient(130% 90% at 30% 0%, rgba(255, 255, 255, .22), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(165deg, rgba(190, 190, 200, .24), rgba(120, 120, 130, .10) 70%);
+  -webkit-backdrop-filter: blur(14px) saturate(120%); backdrop-filter: blur(14px) saturate(120%);
+  border: 1px solid rgba(255, 255, 255, .2);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, .55),
-    inset 0 -1px 1px rgba(0, 0, 0, .25),
-    inset 0 0 8px color-mix(in srgb, var(--tint) 25%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, .45),
+    inset 0 -1px 1px rgba(0, 0, 0, .3),
+    inset 0 0 6px rgba(255, 255, 255, .06),
     0 8px 18px -10px rgba(0, 0, 0, .9);
-  transition: opacity .25s, transform .25s, filter .25s, box-shadow .25s;
+  transition: opacity .25s, transform .25s, box-shadow .25s, background .25s;
 }
 /* reflet en arc sur le haut du verre */
-.app-ic::before { content: ''; position: absolute; inset: 1px 2px auto; height: 45%; border-radius: 8px 8px 50% 50% / 8px 8px 30% 30%; background: linear-gradient(180deg, rgba(255, 255, 255, .38), rgba(255, 255, 255, 0)); pointer-events: none; z-index: 1; }
-.app-ic svg { display: block; position: relative; z-index: 0; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .45)); }
+.app-ic::before { content: ''; position: absolute; inset: 1px 2px auto; height: 45%; border-radius: 8px 8px 50% 50% / 8px 8px 30% 30%; background: linear-gradient(180deg, rgba(255, 255, 255, .3), rgba(255, 255, 255, 0)); pointer-events: none; z-index: 1; }
+/* logo en niveaux de gris clairs, légèrement en relief */
+.app-ic svg { display: block; position: relative; z-index: 0; filter: grayscale(1) brightness(1.55) contrast(.9) drop-shadow(0 1px 1.5px rgba(0, 0, 0, .5)); opacity: .9; transition: opacity .25s, filter .25s; }
 .app-ic:hover { transform: translateY(-1px) scale(1.06); }
-.app-ic.off { opacity: .28; filter: grayscale(1); }
+.app-ic.off { opacity: .3; }
 .app-ic.on {
   transform: translateY(-2px) scale(1.08);
-  border-color: color-mix(in srgb, var(--tint) 70%, white);
+  background:
+    radial-gradient(130% 90% at 30% 0%, rgba(255, 255, 255, .34), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(165deg, rgba(220, 220, 230, .34), rgba(150, 150, 160, .16) 70%);
+  border-color: rgba(255, 255, 255, .45);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, .6),
-    inset 0 0 10px color-mix(in srgb, var(--tint) 45%, transparent),
-    0 0 0 3px color-mix(in srgb, var(--tint) 25%, transparent),
-    0 10px 22px -8px color-mix(in srgb, var(--tint) 80%, transparent);
+    inset 0 1px 0 rgba(255, 255, 255, .7),
+    inset 0 0 10px rgba(255, 255, 255, .12),
+    0 0 0 3px rgba(255, 255, 255, .08),
+    0 10px 22px -8px rgba(0, 0, 0, .9);
 }
+.app-ic.on svg { opacity: 1; filter: grayscale(1) brightness(1.9) contrast(.95) drop-shadow(0 1px 2px rgba(0, 0, 0, .55)); }
 @media (max-width: 560px) { .app-ic { width: 25px; height: 25px; } }
 .accepted .mut { font-size: 12px; }
 .accepted .warn { color: var(--gold); }

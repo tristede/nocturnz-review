@@ -1,5 +1,5 @@
-// Icônes des sources et formats acceptés, façon « liquid glass » : le verre (flou, reflet, teinte légère)
-// est dessiné en CSS (.app-ic), le logo de chaque app est posé dessus en couleur.
+// Icônes des sources et formats acceptés, façon « liquid glass » gris : le verre (flou, reflet) est dessiné
+// en CSS (.app-ic), qui passe aussi les logos en niveaux de gris ; `tint` reste la couleur d'origine de l'app.
 const G = ({ children }) => <svg viewBox="0 0 32 32" width="100%" height="100%" aria-hidden>{children}</svg>;
 const Label = ({ t, size = 11, y = 20.5, fill }) => (
   <text x="16" y={y} textAnchor="middle" fontSize={size} fontWeight="800" fontFamily="Inter, system-ui, sans-serif" fill={fill} letterSpacing="-.03em">{t}</text>
