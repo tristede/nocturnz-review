@@ -122,7 +122,7 @@ function Accepted({ link }) {
   }, [link]);
 
   const lit = det && !det.error && !det.checking;
-  const caption = !det ? 'Vidéo, image, SVG, PDF, Word, Photoshop ou Google Docs, depuis Drive ou YouTube'
+  const caption = !det ? ''
     : det.error ? det.error
     : det.checking ? 'Vérification du fichier…'
     : det.source === 'youtube' ? 'Vidéo YouTube'
@@ -131,12 +131,12 @@ function Accepted({ link }) {
     <div className={`accepted ${det ? 'has' : ''}`}>
       <div className="app-icons">
         {ACCEPTED.map((a) => (
-          <span key={a.key} className={`app-ic ${lit ? (a.match(det) ? 'on' : 'off') : ''}`} title={a.label}>
-            {APP_ICONS[a.key].glyph}
+          <span key={a.key} className="app-tip" data-label={a.label} aria-label={a.label} role="img">
+            <span className={`app-ic ${lit ? (a.match(det) ? 'on' : 'off') : ''}`}>{APP_ICONS[a.key].glyph}</span>
           </span>
         ))}
       </div>
-      <span className={`mut ${det?.error ? 'warn' : ''}`}>{caption}</span>
+      {caption && <span className={`mut ${det?.error ? 'warn' : ''}`}>{caption}</span>}
     </div>
   );
 }
