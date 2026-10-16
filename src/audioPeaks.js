@@ -119,3 +119,14 @@ export async function peaksFromLocalMp4(file, dur, onProgress) {
   if (decodeError) throw new Error(`Décodage du son impossible : ${decodeError.message || decodeError}`);
   return toPeaks(raw);
 }
+
+// format stocké : base64 des pics mono (ancien format) ou "2:" + base64(gauche puis droite)
+export const b64ToBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+const bytesToB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode(...u8.subarray(i, i + 8192)); return btoa(s); };
+
+export const encodePeaks = ({ l, r }) => {
+  if (!r) return bytesToB64(l);
+  const all = new Uint8Array(l.length + r.length);
+  all.set(l); all.set(r, l.length);
+  return `2:${bytesToB64(all)}`;
+};

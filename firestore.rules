@@ -41,6 +41,20 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // hébergement des vidéos (stockage compatible S3 propre à chaque hôte) : clés lisibles par cet hôte seul
+    match /hosting/{uid} {
+      allow read, delete: if isHost() && request.auth.uid == uid;
+      allow create, update: if isHost() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['provider', 'endpoint', 'region', 'bucket', 'accessKeyId', 'secretAccessKey', 'publicBase', 'limitBytes'])
+        && request.resource.data.provider in ['r2', 's3']
+        && request.resource.data.endpoint is string && request.resource.data.endpoint.matches('https://.+')
+        && request.resource.data.publicBase is string && request.resource.data.publicBase.matches('https?://.+')
+        && request.resource.data.bucket is string && request.resource.data.bucket.size() <= 63
+        && request.resource.data.accessKeyId is string && request.resource.data.accessKeyId.size() <= 128
+        && request.resource.data.secretAccessKey is string && request.resource.data.secretAccessKey.size() <= 256
+        && request.resource.data.limitBytes is number && request.resource.data.limitBytes > 0;
+    }
+
     match /projects/{pid} {
       allow get: if owns(resource.data) || viewable(resource.data);
       allow list: if owns(resource.data);

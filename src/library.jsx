@@ -1,14 +1,104 @@
 // Éléments communs au tableau de bord et aux pages projet : cartes de review, partage, ajout d'un lien.
-import { useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as data from './data';
 import { ACCEPTED, APP_ICONS } from './appIcons';
 import { KIND_LABEL, checkYouTube, driveMeta, kindOf, parseLink, thumbUrl } from './links';
+import { fmtGB, removeObject, usage } from './storage';
+import { importFile, keysOf } from './importer';
 
 const DAY = 86_400_000;
 const FPS_PRESETS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
 const day = (t) => new Date(t).toLocaleDateString('fr-BE', { day: 'numeric', month: 'short', year: 'numeric' });
-const sourceLabel = (v) => (v.source === 'youtube' ? 'YouTube' : v.kind && v.kind !== 'video' ? KIND_LABEL[v.kind] : 'Drive');
+const sourceLabel = (v) => (v.source === 'youtube' ? 'YouTube' : v.source === 'file' ? `${KIND_LABEL[v.kind] || 'Fichier'} · fichier importé` : v.kind && v.kind !== 'video' ? KIND_LABEL[v.kind] : 'Drive');
+
+/* ───────── Hébergement de l'hôte : réglage + place occupée, partagés par toute la page ───────── */
+const HostingCtx = createContext({ hosting: null, used: null, ready: false, error: '', refresh: () => {} });
+export function HostingProvider({ uid, children }) {
+  const [st, setSt] = useState({ hosting: null, used: null, ready: false, error: '' });
+  const refresh = useCallback(async () => {
+    try {
+      const hosting = await data.loadHosting(uid);
+      if (!hosting) return setSt({ hosting: null, used: null, ready: true, error: '' });
+      try { const u = await usage(hosting); setSt({ hosting, used: u.bytes, ready: true, error: '' }); }
+      catch (e) { setSt({ hosting, used: null, ready: true, error: e.message }); }
+    } catch { setSt((s) => ({ ...s, ready: true })); }
+  }, [uid]);
+  useEffect(() => { if (uid) refresh(); }, [uid, refresh]);
+  return <HostingCtx.Provider value={{ ...st, refresh }}>{children}</HostingCtx.Provider>;
+}
+export const useHosting = () => useContext(HostingCtx);
+
+// jauge « 3,2 / 9,5 Go » ; rouge au-delà de 90 %
+export function StorageGauge() {
+  const { hosting, used, ready, error } = useHosting();
+  if (!ready) return null;
+  if (!hosting) {
+    return <p className="mut gauge-line">Pour importer des fichiers depuis ton ordinateur, <Link to="/hebergement">branche ton hébergement</Link>.</p>;
+  }
+  if (error) return <p className="mut gauge-line warn">Hébergement injoignable : {error} <Link to="/hebergement">Réglages</Link></p>;
+  const ratio = Math.min(1, (used || 0) / hosting.limitBytes);
+  return (
+    <div className={`gauge ${ratio > 0.9 ? 'full' : ''}`} title="Place utilisée dans ton hébergement">
+      <div className="gauge-bar"><i style={{ width: `${ratio * 100}%` }} /></div>
+      <span className="mut">{fmtGB(used || 0)} / {fmtGB(hosting.limitBytes)}</span>
+      <Link className="mut" to="/hebergement">Réglages</Link>
+    </div>
+  );
+}
+
+// reviews expirées qui occupent encore de la place : les supprimer d'un geste (pas de serveur pour le faire seul)
+export function ExpiredCleanup({ assets, onDone }) {
+  const { hosting, refresh } = useHosting();
+  const [busy, setBusy] = useState(false);
+  const old = assets.filter((a) => a.expiresAt && a.expiresAt < Date.now() && a.versions.some((v) => v.source === 'file'));
+  if (!hosting || !old.length) return null;
+  const bytes = old.reduce((n, a) => n + a.versions.reduce((m, v) => m + (v.source === 'file' ? v.size || 0 : 0), 0), 0);
+  const purge = async () => {
+    setBusy(true);
+    try {
+      for (const a of old) {
+        for (const k of a.versions.flatMap(keysOf)) await removeObject(hosting, k);
+        await data.deleteAsset(a.id);
+      }
+    } finally { setBusy(false); refresh(); onDone(); }
+  };
+  return (
+    <div className="gauge-line expired">
+      <span className="mut">{old.length} review{old.length > 1 ? 's' : ''} expirée{old.length > 1 ? 's' : ''} occupe{old.length > 1 ? 'nt' : ''} encore {fmtGB(bytes)}.</span>
+      {busy ? <span className="mut">Suppression…</span> : <DeleteButton label="Supprimer les reviews expirées et leurs fichiers" confirmText={`Supprimer ${old.length > 1 ? 'les' : 'la'} review${old.length > 1 ? 's' : ''} ?`} onConfirm={purge} />}
+    </div>
+  );
+}
+
+// suit un import : étape, avancement, annulation
+function useImportJob() {
+  const [job, setJob] = useState(null); // { step, p }
+  const ctrl = useRef(null);
+  const run = async (fn) => {
+    ctrl.current = new AbortController();
+    setJob({ step: 'Préparation…', p: 0 });
+    try {
+      return await fn({
+        signal: ctrl.current.signal,
+        onStep: (step) => setJob((j) => ({ ...j, step })),
+        onProgress: (p) => setJob((j) => ({ ...j, p })),
+      });
+    } finally { setJob(null); }
+  };
+  return { job, run, cancel: () => ctrl.current?.abort() };
+}
+function ImportProgress({ job, onCancel }) {
+  if (!job) return null;
+  return (
+    <div className="import-progress">
+      <div className="gauge-bar"><i style={{ width: `${Math.round(job.p * 100)}%` }} /></div>
+      <span className="mut">{job.step} {job.p > 0 && job.p < 1 ? `${Math.round(job.p * 100)} %` : ''}</span>
+      <button type="button" className="link" onClick={onCancel}>Annuler</button>
+    </div>
+  );
+}
+const baseName = (name) => name.replace(/\.\w{1,6}$/, '');
 
 export function shareLine(a) {
   if (a.revoked) return 'Lien désactivé';
@@ -41,9 +131,10 @@ export const latestOf = (a) => a.versions[a.versions.length - 1];
 
 export function Thumb({ v, className = 'thumb' }) {
   const [ok, setOk] = useState(true);
+  const src = !v ? null : v.source === 'file' ? v.thumb : thumbUrl(v.source, v.videoId);
   return (
     <div className={className}>
-      {v && ok && <img src={thumbUrl(v.source, v.videoId)} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setOk(false)} />}
+      {src && ok && <img src={src} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setOk(false)} />}
     </div>
   );
 }
@@ -147,6 +238,29 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [link, setLink] = useState('');
+  const [title, setTitle] = useState('');
+  const [proj, setProj] = useState('');
+  const [over, setOver] = useState(false);
+  const { hosting, refresh } = useHosting();
+  const { job, run: runJob, cancel } = useImportJob();
+  const fileInput = useRef(null);
+
+  // import d'un fichier depuis l'ordinateur vers l'hébergement de l'hôte
+  const importOne = async (file) => {
+    if (!file || job) return;
+    setErr('');
+    try {
+      await runJob(async (opts) => {
+        const aid = data.newToken();
+        const v = await importFile({ hosting, file, aid, n: 1, ...opts });
+        await data.createAsset({ uid, aid, title: title.trim() || baseName(file.name), project: projects ? proj || null : project, ...v });
+      });
+      setTitle('');
+      refresh();
+      await onDone();
+    } catch (ex) { if (!ex.aborted) setErr(ex.message); }
+  };
+  const isFiles = (e) => e.dataTransfer?.types?.includes('Files');
   const add = async (e) => {
     e.preventDefault();
     const form = e.currentTarget, f = new FormData(form);
@@ -154,30 +268,39 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
     try {
       const l = await resolveLink(f.get('link'));
       await data.createAsset({
-        uid, title: String(f.get('title')).trim() || l.title || 'Sans titre', source: l.source, videoId: l.videoId, kind: l.kind, name: l.name,
-        project: projects ? f.get('project') || null : project,
+        uid, title: title.trim() || l.title || 'Sans titre', source: l.source, videoId: l.videoId, kind: l.kind, name: l.name,
+        project: projects ? proj || null : project,
       });
       form.reset();
-      setLink('');
+      setLink(''); setTitle('');
       await onDone();
     } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   };
   return (
-    <div className="card" style={{ display: 'grid', gap: 10 }}>
+    <div className={`card add-card ${over ? 'file-over' : ''}`} style={{ display: 'grid', gap: 10 }}
+      onDragEnter={(e) => { if (isFiles(e)) { e.preventDefault(); setOver(true); } }}
+      onDragOver={(e) => { if (isFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } }}
+      onDragLeave={(e) => { if (isFiles(e) && !e.currentTarget.contains(e.relatedTarget)) setOver(false); }}
+      onDrop={(e) => { if (!isFiles(e)) return; e.preventDefault(); setOver(false); importOne(e.dataTransfer.files[0]); }}>
       <form onSubmit={add} style={{ display: 'grid', gap: 8 }}>
-        <input name="title" placeholder="Titre (facultatif : sinon le nom du fichier)" />
+        <input name="title" placeholder="Titre (facultatif : sinon le nom du fichier)" value={title} onChange={(e) => setTitle(e.target.value)} />
         <div className="row">
-          <input name="link" placeholder="Colle un lien Google Drive ou YouTube" required value={link} onChange={(e) => setLink(e.target.value)} />
+          <input name="link" placeholder="Colle un lien YouTube ou Google Drive" value={link} onChange={(e) => setLink(e.target.value)} required={!!link} />
           {projects?.length > 0 && (
-            <select name="project" defaultValue="" title="Ranger dans un projet">
+            <select name="project" value={proj} onChange={(e) => setProj(e.target.value)} title="Ranger dans un projet">
               <option value="">Sans projet</option>
               {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           )}
-          <button disabled={busy}>{busy ? '…' : 'Ajouter'}</button>
+          {link.trim()
+            ? <button disabled={busy || !!job}>{busy ? '…' : 'Ajouter'}</button>
+            : <button type="button" disabled={!!job} onClick={() => (hosting ? fileInput.current.click() : setErr('Branche d’abord ton hébergement (lien sous ce formulaire) pour importer des fichiers.'))}>Importer</button>}
+          <input ref={fileInput} type="file" hidden accept="video/*,image/*,.svg,.pdf,.docx,.psd,.psb"
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; importOne(f); }} />
         </div>
-        <Accepted link={link} />
+        {job ? <ImportProgress job={job} onCancel={cancel} /> : <Accepted link={link} />}
       </form>
+      {over && <div className="drop-hint">Dépose le fichier pour l’importer</div>}
       {err && <span className="mut">{err}</span>}
     </div>
   );
@@ -230,7 +353,21 @@ export function AssetCard({ a, projects = [], onChange, onDragging }) {
   const open = openCount(a);
   const isVideo = !latest.kind || latest.kind === 'video';
   const [msg, setMsg] = useState('');
-  const run = async (fn) => { setMsg(''); try { await fn(); await onChange(); } catch (e) { setMsg(e.message || 'Échec'); } };
+  const { hosting, refresh } = useHosting();
+  const { job, run: runJob, cancel } = useImportJob();
+  const run = async (fn) => { setMsg(''); try { await fn(); await onChange(); } catch (e) { if (!e.aborted) setMsg(e.message || 'Échec'); } };
+  // supprimer la review efface aussi ses fichiers importés (et libère la place)
+  const remove = () => run(async () => {
+    const keys = a.versions.flatMap(keysOf);
+    if (keys.length && hosting) for (const k of keys) await removeObject(hosting, k);
+    await data.deleteAsset(a.id);
+    if (keys.length) refresh();
+  });
+  const importVersion = (file) => file && run(() => runJob(async (opts) => {
+    const v = await importFile({ hosting, file, aid: a.id, n: latest.n + 1, ...opts });
+    await data.addVersion(a.id, latest.n + 1, v);
+    refresh();
+  }));
 
   const addVersion = (e) => {
     e.preventDefault();
@@ -279,6 +416,7 @@ export function AssetCard({ a, projects = [], onChange, onDragging }) {
             <span className="mut">{sourceLabel(latest)}</span>
           </div>
           <LinkLine item={a} path={`/r/${a.id}`} setMsg={setMsg} />
+          {job && <ImportProgress job={job} onCancel={cancel} />}
           {msg && <div className="mut" style={{ marginTop: 6 }}>{msg}</div>}
         </div>
 
@@ -289,8 +427,14 @@ export function AssetCard({ a, projects = [], onChange, onDragging }) {
             <summary>Nouvelle version</summary>
             <div className="pop col">
               <span className="mut">Ajoute la v{latest.n + 1} (vidéo, image ou document) : le lien de partage reste le même.</span>
+              {hosting && (
+                <label className="file-pick">
+                  <span className="sm-btn">Importer un fichier</span>
+                  <input type="file" hidden accept="video/*,image/*,.svg,.pdf,.docx,.psd,.psb" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; importVersion(f); }} />
+                </label>
+              )}
               <form onSubmit={addVersion} className="row">
-                <input name="link" placeholder="Lien YouTube ou Drive partagé" required />
+                <input name="link" placeholder={hosting ? 'ou un lien YouTube / Drive' : 'Lien YouTube ou Drive partagé'} required />
                 <button className="sm">Ajouter</button>
               </form>
             </div>
@@ -316,7 +460,7 @@ export function AssetCard({ a, projects = [], onChange, onDragging }) {
             </div>
           </details>
 
-          <DeleteButton label="Supprimer la review et ses versions" confirmText="Supprimer la review ?" onConfirm={() => run(() => data.deleteAsset(a.id))} />
+          <DeleteButton label="Supprimer la review et ses versions" confirmText="Supprimer la review ?" onConfirm={remove} />
         </div>
       </div>
     </div>

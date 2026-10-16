@@ -133,6 +133,18 @@ await check('un invité ne déplace pas une review', assertFails(updateDoc(doc(g
 await check('l\'hôte renomme et désactive son projet', assertSucceeds(updateDoc(doc(hostDb, 'projects/P1'), { name: 'Pub 2', revoked: true })));
 await check('l\'hôte supprime son projet', assertSucceeds(deleteDoc(doc(hostDb, 'projects/P1'))));
 
+console.log('Hébergement');
+const hosting = (over = {}) => ({ provider: 'r2', endpoint: 'https://acc.r2.cloudflarestorage.com', region: 'auto', bucket: 'reviews', accessKeyId: 'AK', secretAccessKey: 'SK', publicBase: 'https://pub-x.r2.dev', limitBytes: 9.5e9, ...over });
+await check('un hôte enregistre son hébergement', assertSucceeds(setDoc(doc(hostDb, 'hosting/hostUid'), hosting())));
+await check('…et le relit', assertSucceeds(getDoc(doc(hostDb, 'hosting/hostUid'))));
+await check('un autre compte ne lit pas les clés', assertFails(getDoc(doc(otherHostDb, 'hosting/hostUid'))));
+await check('un invité ne lit pas les clés', assertFails(getDoc(doc(guestDb, 'hosting/hostUid'))));
+await check('personne ne liste les hébergements', assertFails(getDocs(collection(hostDb, 'hosting'))));
+await check('un hôte n\'écrit pas l\'hébergement d\'un autre', assertFails(setDoc(doc(hostDb, 'hosting/u2'), hosting())));
+await check('un compte non hôte n\'enregistre pas d\'hébergement', assertFails(setDoc(doc(otherHostDb, 'hosting/u2'), hosting())));
+await check('adresse non https refusée', assertFails(setDoc(doc(hostDb, 'hosting/hostUid'), hosting({ endpoint: 'http://x' }))));
+await check('champ en trop refusé', assertFails(setDoc(doc(hostDb, 'hosting/hostUid'), hosting({ extra: 1 }))));
+
 console.log('Gestion du partage');
 await check('l\'hôte désactive puis réactive', assertSucceeds(updateDoc(doc(hostDb, 'assets/NOEXP'), { revoked: true })));
 await check('l\'hôte passe une review en invitation', assertSucceeds(updateDoc(doc(hostDb, 'assets/LINK'), { access: 'invite', invited: ['friend@x.test'] })));

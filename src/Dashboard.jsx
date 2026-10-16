@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import * as data from './data';
-import { AddAssetForm, AssetCard, DropBar, DropZone, Thumb, latestOf, openCount } from './library';
+import { AddAssetForm, AssetCard, DropBar, DropZone, ExpiredCleanup, HostingProvider, StorageGauge, Thumb, latestOf, openCount } from './library';
 import Notice from './Notice';
 
 // menu « ⋯ » d'une tuile de projet : tout gérer sans ouvrir le projet
@@ -158,6 +158,7 @@ export default function Dashboard() {
   };
 
   return (
+    <HostingProvider uid={user.uid}>
     <div className="wrap">
       <div className="row" style={{ justifyContent: 'space-between', marginBottom: 30 }}>
         <div className="brand" style={{ margin: 0 }}><i /> Review</div>
@@ -166,6 +167,8 @@ export default function Dashboard() {
       <h1>Vos reviews</h1>
 
       <AddAssetForm uid={user.uid} projects={lib?.projects} onDone={reload} />
+      <StorageGauge />
+      {lib && <ExpiredCleanup assets={lib.assets} onDone={reload} />}
       {err && <p className="mut">{err}</p>}
 
       {!lib && <p className="mut">Chargement…</p>}
@@ -181,9 +184,10 @@ export default function Dashboard() {
           {dragging && lib.projects.length > 0 && <DropBar targets={lib.projects} onDropAsset={move} />}
           {loose.map((a) => <AssetCard key={a.id} a={a} projects={lib.projects} onChange={reload} onDragging={setDragging} />)}
           {loose.length > 0 && lib.projects.length > 0 && !dragging && <p className="mut hint">Astuce : glisse une review sur un projet pour l’y ranger.</p>}
-          {!loose.length && <p className="mut">{lib.assets.length ? 'Toutes tes reviews sont rangées dans des projets.' : 'Aucune review. Colle un lien ci-dessus.'}</p>}
+          {!loose.length && <p className="mut">{lib.assets.length ? 'Toutes tes reviews sont rangées dans des projets.' : 'Aucune review. Importe un fichier ou colle un lien ci-dessus.'}</p>}
         </>
       )}
     </div>
+    </HostingProvider>
   );
 }

@@ -79,7 +79,9 @@ export default function ReviewPage() {
       initialPeaks={current.peaks}
       source={current.source}
       videoId={current.videoId}
-      versions={versions.map((x) => ({ n: x.n, status: x.status, source: x.source, videoId: x.videoId, kind: x.kind || 'video' }))}
+      mediaUrl={current.url || null}
+      fileBytes={current.size || null}
+      versions={versions.map((x) => ({ n: x.n, status: x.status, source: x.source, videoId: x.videoId, kind: x.kind || 'video', url: x.url || null }))}
       currentN={current.n}
       latestN={latest.n}
       initialStatus={current.status ? { status: current.status, by: current.statusBy, at: current.statusAt } : null}

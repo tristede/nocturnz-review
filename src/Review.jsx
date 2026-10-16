@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as data from './data';
 import { videoUrl, driveMeta } from './links';
-import { peaksFromLocalMp4 } from './audioPeaks';
+import { peaksFromLocalMp4, encodePeaks, b64ToBytes } from './audioPeaks';
 import { COLORS, TOOLS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause, IconChevron } from './draw';
 
 const PRESETS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
@@ -36,16 +36,6 @@ async function detectFps(v) {
   return Math.abs(near - raw) / near < 0.02 ? near : Math.round(raw * 1000) / 1000;
 }
 
-const b64ToBytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-const bytesToB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode(...u8.subarray(i, i + 8192)); return btoa(s); };
-
-// format stocké : base64 des pics mono (ancien format) ou "2:" + base64(gauche puis droite)
-const encodePeaks = ({ l, r }) => {
-  if (!r) return bytesToB64(l);
-  const all = new Uint8Array(l.length + r.length);
-  all.set(l); all.set(r, l.length);
-  return `2:${bytesToB64(all)}`;
-};
 const decodePeaks = (str) => {
   if (!str) return null;
   if (str.startsWith('2:')) {
@@ -224,7 +214,7 @@ function createYtShim({ host, videoId, box, onDuration, onState, onTime }) {
   return { shim, destroy() { dead = true; clearInterval(poll); try { player?.destroy(); } catch {} host.remove(); } };
 }
 
-export default function Review({ aid, title, admin, back = null, initialFps, initialPeaks, source, videoId, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
+export default function Review({ aid, title, admin, back = null, initialFps, initialPeaks, source, videoId, mediaUrl = null, fileBytes = null, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
   const isYt = source === 'youtube';
   const navigate = useNavigate();
   const [approval, setApproval] = useState(initialStatus);
@@ -578,7 +568,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
     if (isYt || !admin || peaks || wavedRef.current || !Number.isFinite(dur) || dur <= 0) return;
     if (source === 'drive' && fileSize == null) return; // on attend la taille
     wavedRef.current = true;
-    if (fileSize > AUTO_WAVE_MAX) { setNeedLocalWave(true); return; }
+    if ((source === 'file' ? fileBytes : fileSize) > AUTO_WAVE_MAX) { setNeedLocalWave(true); return; }
     setWaving(true);
     (async () => {
       try {
@@ -698,7 +688,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
   const onVideoError = async (code) => {
     if (code === 3) return setVideoErr('format');
     try {
-      const r = await fetch(videoUrl(source, videoId), { headers: { Range: 'bytes=0-1' } });
+      const r = await fetch(videoUrl(source, videoId, mediaUrl), { headers: { Range: 'bytes=0-1' } });
       if (!r.ok) {
         const reason = (await r.json().catch(() => null))?.error?.errors?.[0]?.reason;
         return setVideoErr(reason === 'downloadQuotaExceeded' ? 'quota' : 'drive');
@@ -854,7 +844,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
               <p><strong>Les vidéos Google Drive ne sont plus lues ici.</strong></p>
               <p className="mut">Google bloque trop souvent la lecture des fichiers lourds. {admin ? 'Ajoute une nouvelle version avec un lien YouTube non répertorié : les commentaires de cette version restent consultables.' : 'Le monteur va partager une nouvelle version.'}</p>
             </div>
-          ) : <video ref={vid} src={videoUrl(source, videoId)} preload="metadata" playsInline
+          ) : <video ref={vid} src={videoUrl(source, videoId, mediaUrl)} preload="metadata" playsInline
             onClick={playPause}
             onLoadedMetadata={(e) => { setVideoErr(false); onMeta(e.currentTarget); }}
             onTimeUpdate={(e) => { if (scrub.current.pending == null) setNow(e.currentTarget.currentTime); }}
@@ -906,7 +896,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
                 <div className="ytframe" ref={slaveYtWrap} />
                 <div className="ytshield" onClick={playPause} />
               </>
-            ) : <video ref={slaveRef} src={videoUrl(other.source, other.videoId)} muted playsInline preload="metadata"
+            ) : <video ref={slaveRef} src={videoUrl(other.source, other.videoId, other.url)} muted playsInline preload="metadata"
               onClick={playPause}
               onLoadedMetadata={(e) => setSlaveDur(e.currentTarget.duration)} />}
           </div>

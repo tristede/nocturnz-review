@@ -45,13 +45,15 @@ export const driveUrl = (id) => `https://www.googleapis.com/drive/v3/files/${id}
 // vignette publique (sans clé) ; peut échouer, l'image est alors simplement masquée
 export const thumbUrl = (source, id) =>
   source === 'youtube' ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : `https://drive.google.com/thumbnail?id=${id}&sz=w480`;
-export const videoUrl = (source, videoId) => (source === 'drive' ? driveUrl(videoId) : null);
+// adresse lisible directement par le navigateur : fichier importé (url publique) ou fichier Drive
+export const videoUrl = (source, videoId, url = null) => (source === 'file' ? url : source === 'drive' ? driveUrl(videoId) : null);
 
 // Google Docs / Slides / Sheets / Drawings : Drive les exporte en PDF (fichiers de moins de 10 Mo)
 export const driveExportUrl = (id) => `https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=application/pdf&key=${DRIVE_KEY}`;
 // adresse du contenu d'une version selon son type
 // (émulateur seulement : « local:fichier » lit tmp-test/, pour tester sans solliciter Drive)
-export const fileUrl = (v) => (import.meta.env.VITE_EMULATORS && v.videoId.startsWith('local:') ? `/tmp-test/${v.videoId.slice(6)}`
+export const fileUrl = (v) => (v.source === 'file' ? v.url
+  : import.meta.env.VITE_EMULATORS && v.videoId.startsWith('local:') ? `/tmp-test/${v.videoId.slice(6)}`
   : v.kind === 'gdoc' ? driveExportUrl(v.videoId) : driveUrl(v.videoId));
 
 // Métadonnées d'un fichier Drive public (nom, type, taille) : une petite requête JSON, sans télécharger le fichier.

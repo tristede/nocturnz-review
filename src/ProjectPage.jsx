@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import * as data from './data';
-import { AddAssetForm, AssetCard, AssetTile, DeleteButton, DropBar, LinkLine, SharePanel } from './library';
+import { AddAssetForm, AssetCard, AssetTile, DeleteButton, DropBar, HostingProvider, LinkLine, SharePanel, StorageGauge } from './library';
 import Notice from './Notice';
 
 export default function ProjectPage() {
@@ -70,6 +70,7 @@ export default function ProjectPage() {
   const remove = () => data.deleteProject(pid, user.uid).then(() => nav('/')).catch((e) => setMsg(e.message));
 
   return (
+    <HostingProvider uid={user.uid}>
     <div className="wrap">
       <Link className="eyebrow back" to="/">← Vos reviews</Link>
       <div className="project-head">
@@ -90,6 +91,7 @@ export default function ProjectPage() {
 
       <div style={{ marginTop: 22 }}>
         <AddAssetForm uid={user.uid} project={pid} onDone={reload} />
+        <StorageGauge />
       </div>
       {dragging && (
         <DropBar targets={[{ id: null, name: 'Sans projet' }, ...projects.filter((p) => p.id !== pid)]}
@@ -97,7 +99,8 @@ export default function ProjectPage() {
       )}
       {assets.map((a) => <AssetCard key={a.id} a={a} projects={projects} onChange={reload} onDragging={setDragging} />)}
       {assets.length > 0 && !dragging && <p className="mut hint">Astuce : glisse une review pour la sortir du projet ou la mettre dans un autre.</p>}
-      {!assets.length && <p className="mut">Projet vide : colle un lien ci-dessus pour y ajouter une vidéo.</p>}
+      {!assets.length && <p className="mut">Projet vide : importe un fichier ou colle un lien ci-dessus.</p>}
     </div>
+    </HostingProvider>
   );
 }

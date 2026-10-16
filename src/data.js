@@ -18,8 +18,10 @@ export const newToken = () => {
 
 const toAsset = (d) => { const a = d.data(); return { id: d.id, ...a, created: ms(a.created), expiresAt: ms(a.expiresAt) }; };
 const toVersion = (d) => ({ id: d.id, ...d.data() });
-// kind : 'video' (défaut) ou un type « page par page » (image, pdf, psd, docx, gdoc) ; name : nom du fichier Drive
-const newVersion = (n, source, videoId, kind = 'video', name = null) => ({ n, source, videoId, kind, name, fps: null, peaks: null, status: null, statusBy: null, statusAt: null });
+// source : 'youtube', 'drive' (documents) ou 'file' (fichier importé dans l'hébergement de l'hôte : videoId = clé, url = adresse publique)
+// kind : 'video' ou un type « page par page » (image, pdf, psd, docx, gdoc) ; name : nom du fichier
+const newVersion = (n, { source, videoId, kind = 'video', name = null, url = null, thumb = null, size = null, peaks = null }) =>
+  ({ n, source, videoId, kind, name, url, thumb, size, fps: null, peaks, status: null, statusBy: null, statusAt: null });
 const versionsRef = (aid) => collection(db, 'assets', aid, 'versions');
 const commentsRef = (aid, n) => collection(db, 'assets', aid, 'versions', String(n), 'comments');
 
@@ -105,17 +107,25 @@ export async function listProjectAssets(pid, uid) {
   return withVersions(await getDocs(q));
 }
 
-export async function createAsset({ uid, title, source, videoId, kind = 'video', name = null, project = null }) {
-  const aid = newToken();
+export async function createAsset({ uid, title, project = null, aid = newToken(), ...version }) {
   await setDoc(doc(db, 'assets', aid), {
     title, owner: uid, created: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 30 * DAY),
     revoked: false, access: 'link', invited: [], project,
   });
-  await setDoc(doc(versionsRef(aid), '1'), newVersion(1, source, videoId, kind, name));
+  await setDoc(doc(versionsRef(aid), '1'), newVersion(1, version));
   return aid;
 }
 
-export const addVersion = (aid, n, { source, videoId, kind, name }) => setDoc(doc(versionsRef(aid), String(n)), newVersion(n, source, videoId, kind, name));
+export const addVersion = (aid, n, version) => setDoc(doc(versionsRef(aid), String(n)), newVersion(n, version));
+
+/* ───────── Hébergement des fichiers importés (clés lisibles par l'hôte seul, voir firestore.rules) ───────── */
+
+export async function loadHosting(uid) {
+  const snap = await getDoc(doc(db, 'hosting', uid));
+  return snap.exists() ? snap.data() : null;
+}
+export const saveHosting = (uid, h) => setDoc(doc(db, 'hosting', uid), h);
+export const deleteHosting = (uid) => deleteDoc(doc(db, 'hosting', uid));
 
 export const moveAsset = (aid, project) => updateDoc(doc(db, 'assets', aid), { project: project || null });
 
