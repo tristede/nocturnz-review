@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import * as data from './data';
-import { AddAssetForm, AssetCard, AssetTile, LinkLine, SharePanel } from './library';
+import { AddAssetForm, AssetCard, AssetTile, DeleteButton, DropBar, LinkLine, SharePanel } from './library';
 import Notice from './Notice';
 
 export default function ProjectPage() {
@@ -13,6 +13,7 @@ export default function ProjectPage() {
   const [state, setState] = useState({ status: 'loading' });
   const [msg, setMsg] = useState('');
   const [renaming, setRenaming] = useState(false);
+  const [dragging, setDragging] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -66,11 +67,7 @@ export default function ProjectPage() {
     if (name && name !== project.name) run(() => data.renameProject(pid, name));
     setRenaming(false);
   };
-  const remove = () => {
-    if (confirm(`Supprimer le projet « ${project.name} » ? Ses reviews ne sont pas supprimées : elles repassent dans « Sans projet ».`)) {
-      data.deleteProject(pid, user.uid).then(() => nav('/')).catch((e) => setMsg(e.message));
-    }
-  };
+  const remove = () => data.deleteProject(pid, user.uid).then(() => nav('/')).catch((e) => setMsg(e.message));
 
   return (
     <div className="wrap">
@@ -85,7 +82,7 @@ export default function ProjectPage() {
         )}
         <div className="row">
           <SharePanel item={project} kind="projects" run={run} />
-          <button className="ghost sm" aria-label="Supprimer le projet" title="Supprimer le projet" onClick={remove}>✕</button>
+          <DeleteButton label="Supprimer le projet (ses reviews repassent dans « Sans projet »)" confirmText="Supprimer le projet ?" onConfirm={remove} />
         </div>
       </div>
       <LinkLine item={project} path={`/p/${pid}`} setMsg={setMsg} />
@@ -94,7 +91,12 @@ export default function ProjectPage() {
       <div style={{ marginTop: 22 }}>
         <AddAssetForm uid={user.uid} project={pid} onDone={reload} />
       </div>
-      {assets.map((a) => <AssetCard key={a.id} a={a} projects={projects} onChange={reload} />)}
+      {dragging && (
+        <DropBar targets={[{ id: null, name: 'Sans projet' }, ...projects.filter((p) => p.id !== pid)]}
+          onDropAsset={(aid, to) => { setDragging(false); if (aid) run(() => data.moveAsset(aid, to)); }} />
+      )}
+      {assets.map((a) => <AssetCard key={a.id} a={a} projects={projects} onChange={reload} onDragging={setDragging} />)}
+      {assets.length > 0 && !dragging && <p className="mut hint">Astuce : glisse une review pour la sortir du projet ou la mettre dans un autre.</p>}
       {!assets.length && <p className="mut">Projet vide : colle un lien ci-dessus pour y ajouter une vidéo.</p>}
     </div>
   );

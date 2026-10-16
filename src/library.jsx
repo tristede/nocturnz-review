@@ -181,8 +181,49 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
   );
 }
 
-// carte d'une review côté hôte
-export function AssetCard({ a, projects = [], onChange }) {
+// ✕ puis « Supprimer ? » : deux clics, sans fenêtre système ; se referme tout seul après 4 s
+export function DeleteButton({ label = 'Supprimer', confirmText = 'Supprimer ?', onConfirm }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 4000); return () => clearTimeout(t); }, [armed]);
+  return armed
+    ? <button className="sm danger" onClick={() => { setArmed(false); onConfirm(); }} onBlur={() => setArmed(false)} autoFocus>{confirmText}</button>
+    : <button className="ghost sm" aria-label={label} title={label} onClick={() => setArmed(true)}>✕</button>;
+}
+
+/* ───────── Glisser-déposer : ranger une review dans un projet, ou l'en sortir ───────── */
+const DND = 'application/x-nocturnz-review';
+
+// zone où l'on peut déposer une review ; onDropAsset(id de la review)
+export function DropZone({ onDropAsset, className = '', children, ...rest }) {
+  const [over, setOver] = useState(0);
+  const accepts = (e) => e.dataTransfer.types.includes(DND);
+  return (
+    <div {...rest} className={`${className} ${over ? 'drop-over' : ''}`}
+      onDragEnter={(e) => { if (accepts(e)) { e.preventDefault(); setOver((n) => n + 1); } }}
+      onDragOver={(e) => { if (accepts(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; } }}
+      onDragLeave={(e) => { if (accepts(e)) setOver((n) => Math.max(0, n - 1)); }}
+      onDrop={(e) => { if (!accepts(e)) return; e.preventDefault(); setOver(0); onDropAsset(e.dataTransfer.getData(DND)); }}>
+      {children}
+    </div>
+  );
+}
+
+// barre de destinations qui apparaît pendant qu'on glisse une review
+export function DropBar({ targets, onDropAsset }) {
+  return (
+    <div className="dropbar">
+      <span className="mut">Déposer dans</span>
+      {targets.map((t) => (
+        <DropZone key={t.id ?? 'none'} className="drop-chip" onDropAsset={(aid) => onDropAsset(aid, t.id)}>{t.name}</DropZone>
+      ))}
+    </div>
+  );
+}
+
+// carte d'une review côté hôte ; onDragging(true|false) prévient la page qu'un glisser commence ou finit
+export function AssetCard({ a, projects = [], onChange, onDragging }) {
+  const [canDrag, setCanDrag] = useState(false);
+  const [dragged, setDragged] = useState(false);
   const latest = latestOf(a);
   const open = openCount(a);
   const isVideo = !latest.kind || latest.kind === 'video';
@@ -210,10 +251,18 @@ export function AssetCard({ a, projects = [], onChange }) {
     el.click();
     URL.revokeObjectURL(url);
   });
-  const remove = () => { if (confirm(`Supprimer « ${a.title} » et toutes ses versions ?`)) run(() => data.deleteAsset(a.id)); };
 
   return (
-    <div className="card">
+    <div className={`card ${onDragging ? 'grab' : ''} ${dragged ? 'dragging' : ''}`}
+      draggable={!!onDragging && canDrag}
+      // on ne glisse pas depuis un champ, un menu ou un bouton (sinon impossible de sélectionner du texte)
+      onPointerDown={(e) => setCanDrag(!e.target.closest('input, textarea, select, button, details'))}
+      onDragStart={(e) => {
+        e.dataTransfer.setData(DND, a.id);
+        e.dataTransfer.effectAllowed = 'move';
+        setDragged(true); onDragging?.(true);
+      }}
+      onDragEnd={() => { setDragged(false); onDragging?.(false); }}>
       <div className="asset-top">
         <Link to={`/r/${a.id}`} className="thumb-link"><Thumb v={latest} /></Link>
         <div style={{ flex: '1 1 260px', minWidth: 0 }}>
@@ -265,7 +314,7 @@ export function AssetCard({ a, projects = [], onChange }) {
             </div>
           </details>
 
-          <button className="ghost sm" aria-label="Supprimer" title="Supprimer" onClick={remove}>✕</button>
+          <DeleteButton label="Supprimer la review et ses versions" confirmText="Supprimer la review ?" onConfirm={() => run(() => data.deleteAsset(a.id))} />
         </div>
       </div>
     </div>
