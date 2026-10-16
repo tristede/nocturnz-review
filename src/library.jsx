@@ -31,7 +31,8 @@ export async function resolveLink(link) {
   if (!m) throw new Error('Google Drive ne répond pas : réessaie dans un instant.');
   if (m.denied) throw new Error('Fichier Drive inaccessible : vérifie qu’il est partagé « Tous les utilisateurs disposant du lien ».');
   const kind = kindOf(m.mimeType, m.name);
-  if (!kind) throw new Error(`Type de fichier non pris en charge (${m.name}). Formats acceptés : vidéo, image, SVG, PDF, Word (.docx), Photoshop (.psd), Google Docs/Slides.`);
+  if (kind === 'video') throw new Error('Les vidéos depuis Google Drive ne sont plus prises en charge (Google bloque les fichiers lourds). Pour une vidéo, utilise un lien YouTube non répertorié.');
+  if (!kind) throw new Error(`Type de fichier non pris en charge (${m.name}). Depuis Drive : image, SVG, PDF, Word (.docx), Photoshop (.psd), Google Docs/Slides. Vidéo : lien YouTube.`);
   return { ...l, kind, name: m.name, title: m.name.replace(/\.\w{2,5}$/, '') };
 }
 
@@ -114,6 +115,7 @@ function Accepted({ link }) {
       if (!m) return setDet({ source: 'drive', error: 'Drive ne répond pas' });
       if (m.denied) return setDet({ source: 'drive', error: 'Fichier non partagé « avec le lien »' });
       const kind = kindOf(m.mimeType, m.name);
+      if (kind === 'video') return setDet({ source: 'drive', error: 'Vidéo Drive : utilise plutôt un lien YouTube non répertorié' });
       setDet(kind
         ? { source: 'drive', kind, name: m.name, svg: m.mimeType === 'image/svg+xml' || /\.svg$/i.test(m.name) }
         : { source: 'drive', error: `${m.name} : format non pris en charge` });

@@ -332,12 +332,6 @@ button.menu-item.danger { color: #ff8a8a; }
 button.danger { background: linear-gradient(180deg, #ff6b6b, #e04848); border-color: rgba(255, 255, 255, .17); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 10px 22px -12px rgba(224, 72, 72, .9); }
 button.menu-item.danger { background: none; border: 0; box-shadow: none; }
 button.menu-item.danger:hover { background: rgba(255, 90, 90, .12); }
-
-/* lecteur Google intégré (secours) */
-.gframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
-.vmsg .detail { font-size: 11.5px; color: var(--dim); }
-.timefield { display: flex; align-items: center; gap: 8px; }
-.timefield input { width: 130px; height: 34px; font-variant-numeric: tabular-nums; font-size: 15px; }
 /* lien présenté comme le bouton principal (même arrondi 8 px) */
 a.btn-link { display: inline-flex; align-items: center; height: 34px; padding: 0 15px; border-radius: var(--r); text-decoration: none; font-weight: 600; color: #fff; border: 1px solid rgba(255, 255, 255, .17); background: linear-gradient(180deg, #9d8dff, #7b67ef); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), 0 10px 22px -12px rgba(124, 104, 240, .9); }
 a.btn-link:hover { filter: brightness(1.09); }

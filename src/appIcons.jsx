@@ -76,7 +76,6 @@ export const APP_ICONS = {
 export const ACCEPTED = [
   { key: 'drive', label: 'Google Drive', match: (d) => d?.source === 'drive' },
   { key: 'youtube', label: 'YouTube', match: (d) => d?.source === 'youtube' },
-  { key: 'video', label: 'Vidéo', match: (d) => d?.source === 'drive' && d.kind === 'video' },
   { key: 'image', label: 'Image', match: (d) => d?.kind === 'image' && !d.svg },
   { key: 'svg', label: 'SVG', match: (d) => d?.kind === 'image' && d.svg },
   { key: 'pdf', label: 'PDF', match: (d) => d?.kind === 'pdf' },
