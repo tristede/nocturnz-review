@@ -240,3 +240,22 @@ a.vtitle:hover { text-decoration: underline; }
 .project-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-top: 8px; }
 .project-head h1 { margin: 0; }
 @media (max-width: 560px) { .thumb-link { width: 100%; } }
+
+/* ───────── Fichiers page par page (image, PDF, Word, PSD) ───────── */
+.pstage { position: relative; flex: 1 1 0; min-height: 260px; overflow: auto; display: flex; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: #07070b; }
+.pstage .pwrap { margin: auto; flex: none; }
+.pstage.zoomed .pwrap { margin: 0 auto; }
+.pwrap { position: relative; box-shadow: 0 30px 80px -40px rgba(124, 104, 240, .6); background: #fff; }
+.pwrap > img { display: block; width: 100%; height: 100%; user-select: none; }
+.pwrap .ov { position: absolute; }
+.docpage { transform-origin: 0 0; overflow: hidden; background: #fff; }
+.docpage > section.docx { margin: 0 !important; box-shadow: none !important; }
+.docx-host { position: absolute; left: -100000px; top: 0; }
+.pin.sel { outline: 2px solid #fff; outline-offset: 2px; }
+.vmsg.static, .vbuf.static { position: static; margin: auto; background: none; animation: none; }
+.pages { display: flex; flex-wrap: wrap; gap: 4px; flex: none; }
+.pages button { position: relative; height: 26px; min-width: 30px; padding: 0 8px; font-size: 12px; font-weight: 500; background: rgba(255, 255, 255, .025); border-color: var(--line2); color: var(--mut); box-shadow: none; }
+.pages button:hover { color: #fff; filter: none; background: rgba(255, 255, 255, .07); }
+.pages button.on { background: rgba(142, 123, 255, .2); border-color: rgba(142, 123, 255, .55); color: #fff; }
+.pages button i { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; border-radius: 2px; background: var(--gold); }
+.cm-head button { white-space: nowrap; }

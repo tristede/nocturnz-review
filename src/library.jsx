@@ -2,12 +2,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as data from './data';
-import { checkYouTube, parseLink, thumbUrl } from './links';
+import { KIND_LABEL, checkYouTube, driveMeta, kindOf, parseLink, thumbUrl } from './links';
 
 const DAY = 86_400_000;
 const FPS_PRESETS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
 const day = (t) => new Date(t).toLocaleDateString('fr-BE', { day: 'numeric', month: 'short', year: 'numeric' });
-const sourceLabel = (s) => (s === 'youtube' ? 'YouTube' : 'Drive');
+const sourceLabel = (v) => (v.source === 'youtube' ? 'YouTube' : v.kind && v.kind !== 'video' ? KIND_LABEL[v.kind] : 'Drive');
 
 export function shareLine(a) {
   if (a.revoked) return 'Lien désactivé';
@@ -16,16 +16,22 @@ export function shareLine(a) {
   return parts.join(' · ');
 }
 
-// résout un lien collé ; renvoie { source, videoId, title? } ou lève un message lisible
+// résout un lien collé ; renvoie { source, videoId, kind, name, title? } ou lève un message lisible
 export async function resolveLink(link) {
   const l = parseLink(link);
   if (!l) throw new Error('Lien non reconnu : colle un lien YouTube ou un lien Google Drive partagé « avec le lien ».');
   if (l.source === 'youtube') {
     const c = await checkYouTube(l.videoId);
     if (!c.ok) throw new Error('Cette vidéo YouTube est introuvable, privée, ou l’intégration est désactivée par son propriétaire.');
-    return { ...l, title: c.title };
+    return { ...l, kind: 'video', name: null, title: c.title };
   }
-  return l;
+  // Drive : le type du fichier décide du lecteur (vidéo, ou page par page)
+  const m = await driveMeta(l.videoId);
+  if (!m) throw new Error('Google Drive ne répond pas : réessaie dans un instant.');
+  if (m.denied) throw new Error('Fichier Drive inaccessible : vérifie qu’il est partagé « Tous les utilisateurs disposant du lien ».');
+  const kind = kindOf(m.mimeType, m.name);
+  if (!kind) throw new Error(`Type de fichier non pris en charge (${m.name}). Formats acceptés : vidéo, image, SVG, PDF, Word (.docx), Photoshop (.psd), Google Docs/Slides.`);
+  return { ...l, kind, name: m.name, title: m.name.replace(/\.\w{2,5}$/, '') };
 }
 
 export const openCount = (a) => a.versions.reduce((n, v) => n + v.open, 0);
@@ -102,7 +108,7 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
     try {
       const l = await resolveLink(f.get('link'));
       await data.createAsset({
-        uid, title: String(f.get('title')).trim() || l.title || 'Sans titre', source: l.source, videoId: l.videoId,
+        uid, title: String(f.get('title')).trim() || l.title || 'Sans titre', source: l.source, videoId: l.videoId, kind: l.kind, name: l.name,
         project: projects ? f.get('project') || null : project,
       });
       form.reset();
@@ -112,9 +118,9 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
   return (
     <div className="card" style={{ display: 'grid', gap: 10 }}>
       <form onSubmit={add} style={{ display: 'grid', gap: 8 }}>
-        <input name="title" placeholder="Titre (ex : Clip Zeph) — facultatif pour YouTube" />
+        <input name="title" placeholder="Titre (facultatif : sinon le nom du fichier)" />
         <div className="row">
-          <input name="link" placeholder="Lien YouTube (même non répertorié) ou lien Google Drive partagé" required />
+          <input name="link" placeholder="Lien Drive (vidéo, image, PDF, Word, PSD…) ou YouTube" required />
           {projects?.length > 0 && (
             <select name="project" defaultValue="" title="Ranger dans un projet">
               <option value="">Sans projet</option>
@@ -133,6 +139,7 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
 export function AssetCard({ a, projects = [], onChange }) {
   const latest = latestOf(a);
   const open = openCount(a);
+  const isVideo = !latest.kind || latest.kind === 'video';
   const [msg, setMsg] = useState('');
   const run = async (fn) => { setMsg(''); try { await fn(); await onChange(); } catch (e) { setMsg(e.message || 'Échec'); } };
 
@@ -141,7 +148,7 @@ export function AssetCard({ a, projects = [], onChange }) {
     const form = e.currentTarget;
     run(async () => {
       const l = await resolveLink(new FormData(form).get('link'));
-      await data.addVersion(a.id, latest.n + 1, l.source, l.videoId);
+      await data.addVersion(a.id, latest.n + 1, l);
       form.reset();
     });
   };
@@ -172,7 +179,7 @@ export function AssetCard({ a, projects = [], onChange }) {
             {a.versions.map((v) => (
               <Link key={v.n} className="vchip" to={`/r/${a.id}?v=${v.n}`} title={`${v.count} commentaire(s)`}>v{v.n}{v.status === 'approved' ? ' ✓' : ''}</Link>
             ))}
-            <span className="mut">{sourceLabel(latest.source)}</span>
+            <span className="mut">{sourceLabel(latest)}</span>
           </div>
           <LinkLine item={a} path={`/r/${a.id}`} setMsg={setMsg} />
           {msg && <div className="mut" style={{ marginTop: 6 }}>{msg}</div>}
@@ -184,7 +191,7 @@ export function AssetCard({ a, projects = [], onChange }) {
           <details className="adv">
             <summary>Nouvelle version</summary>
             <div className="pop col">
-              <span className="mut">Ajoute la v{latest.n + 1} : le lien de partage reste le même.</span>
+              <span className="mut">Ajoute la v{latest.n + 1} (vidéo, image ou document) : le lien de partage reste le même.</span>
               <form onSubmit={addVersion} className="row">
                 <input name="link" placeholder="Lien YouTube ou Drive partagé" required />
                 <button className="sm">Ajouter</button>
@@ -195,20 +202,20 @@ export function AssetCard({ a, projects = [], onChange }) {
           <details className="adv">
             <summary>Avancé</summary>
             <div className="pop col">
-              <form onSubmit={saveFps} className="row">
+              {isVideo && <form onSubmit={saveFps} className="row">
                 <select name="fps" defaultValue={latest.fps ?? ''} title={latest.source === 'youtube' ? 'YouTube ne donne pas le framerate : à régler à la main (25 par défaut)' : 'Images par seconde de la vidéo'}>
                   <option value="">{latest.source === 'youtube' ? 'Images/s : 25 (défaut)' : 'Images/s : auto'}</option>
                   {FPS_PRESETS.map((f) => <option key={f} value={f}>{f} images/s</option>)}
                 </select>
                 <button className="ghost sm">OK</button>
                 <span className="mut" style={{ fontSize: 12 }}>v{latest.n}</span>
-              </form>
+              </form>}
               <label className="lbl">Projet</label>
               <select value={a.project || ''} style={{ width: '100%' }} onChange={(e) => run(() => data.moveAsset(a.id, e.target.value))}>
                 <option value="">Sans projet</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
-              <button className="ghost sm" onClick={exportCsv} title={`Markers de la v${latest.n}`}>Export Premiere (v{latest.n})</button>
+              {isVideo && <button className="ghost sm" onClick={exportCsv} title={`Markers de la v${latest.n}`}>Export Premiere (v{latest.n})</button>}
             </div>
           </details>
 

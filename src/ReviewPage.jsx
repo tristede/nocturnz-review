@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { loadProject, loadReview } from './data';
 import Review from './Review';
+import StillReview from './StillReview';
 import Notice from './Notice';
 
 export default function ReviewPage() {
@@ -51,6 +52,22 @@ export default function ReviewPage() {
   const latest = versions[versions.length - 1];
   const current = versions.find((x) => String(x.n) === v) || latest;
   const cmp = versions.find((x) => String(x.n) === sp.get('cmp') && x.n !== current.n)?.n ?? null;
+  if (current.kind && current.kind !== 'video') {
+    return (
+      <StillReview
+        key={`${token}:${current.n}`}
+        aid={token}
+        title={asset.title}
+        admin={admin}
+        back={back}
+        version={current}
+        versions={versions.map((x) => ({ n: x.n, status: x.status }))}
+        currentN={current.n}
+        latestN={latest.n}
+        initialStatus={current.status ? { status: current.status, by: current.statusBy, at: current.statusAt } : null}
+      />
+    );
+  }
   return (
     <Review
       key={`${token}:${current.n}`}
@@ -62,7 +79,7 @@ export default function ReviewPage() {
       initialPeaks={current.peaks}
       source={current.source}
       videoId={current.videoId}
-      versions={versions.map((x) => ({ n: x.n, status: x.status, source: x.source, videoId: x.videoId }))}
+      versions={versions.map((x) => ({ n: x.n, status: x.status, source: x.source, videoId: x.videoId, kind: x.kind || 'video' }))}
       currentN={current.n}
       latestN={latest.n}
       initialStatus={current.status ? { status: current.status, by: current.statusBy, at: current.statusAt } : null}

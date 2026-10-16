@@ -18,7 +18,8 @@ export const newToken = () => {
 
 const toAsset = (d) => { const a = d.data(); return { id: d.id, ...a, created: ms(a.created), expiresAt: ms(a.expiresAt) }; };
 const toVersion = (d) => ({ id: d.id, ...d.data() });
-const newVersion = (n, source, videoId) => ({ n, source, videoId, fps: null, peaks: null, status: null, statusBy: null, statusAt: null });
+// kind : 'video' (défaut) ou un type « page par page » (image, pdf, psd, docx, gdoc) ; name : nom du fichier Drive
+const newVersion = (n, source, videoId, kind = 'video', name = null) => ({ n, source, videoId, kind, name, fps: null, peaks: null, status: null, statusBy: null, statusAt: null });
 const versionsRef = (aid) => collection(db, 'assets', aid, 'versions');
 const commentsRef = (aid, n) => collection(db, 'assets', aid, 'versions', String(n), 'comments');
 
@@ -104,17 +105,17 @@ export async function listProjectAssets(pid, uid) {
   return withVersions(await getDocs(q));
 }
 
-export async function createAsset({ uid, title, source, videoId, project = null }) {
+export async function createAsset({ uid, title, source, videoId, kind = 'video', name = null, project = null }) {
   const aid = newToken();
   await setDoc(doc(db, 'assets', aid), {
     title, owner: uid, created: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 30 * DAY),
     revoked: false, access: 'link', invited: [], project,
   });
-  await setDoc(doc(versionsRef(aid), '1'), newVersion(1, source, videoId));
+  await setDoc(doc(versionsRef(aid), '1'), newVersion(1, source, videoId, kind, name));
   return aid;
 }
 
-export const addVersion = (aid, n, source, videoId) => setDoc(doc(versionsRef(aid), String(n)), newVersion(n, source, videoId));
+export const addVersion = (aid, n, { source, videoId, kind, name }) => setDoc(doc(versionsRef(aid), String(n)), newVersion(n, source, videoId, kind, name));
 
 export const moveAsset = (aid, project) => updateDoc(doc(db, 'assets', aid), { project: project || null });
 

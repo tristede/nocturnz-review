@@ -47,12 +47,34 @@ export const thumbUrl = (source, id) =>
   source === 'youtube' ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : `https://drive.google.com/thumbnail?id=${id}&sz=w480`;
 export const videoUrl = (source, videoId) => (source === 'drive' ? driveUrl(videoId) : null);
 
-// Métadonnées d'un fichier Drive public (taille, durée) : une petite requête JSON, sans télécharger la vidéo.
+// Google Docs / Slides / Sheets / Drawings : Drive les exporte en PDF (fichiers de moins de 10 Mo)
+export const driveExportUrl = (id) => `https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=application/pdf&key=${DRIVE_KEY}`;
+// adresse du contenu d'une version selon son type
+// (émulateur seulement : « local:fichier » lit tmp-test/, pour tester sans solliciter Drive)
+export const fileUrl = (v) => (import.meta.env.VITE_EMULATORS && v.videoId.startsWith('local:') ? `/tmp-test/${v.videoId.slice(6)}`
+  : v.kind === 'gdoc' ? driveExportUrl(v.videoId) : driveUrl(v.videoId));
+
+// Métadonnées d'un fichier Drive public (nom, type, taille) : une petite requête JSON, sans télécharger le fichier.
+// `denied` = Drive a répondu mais refuse (fichier privé, supprimé, lien faux) ; null = réseau.
 export async function driveMeta(id) {
   try {
-    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=name,size,videoMediaMetadata&key=${DRIVE_KEY}`);
-    if (!r.ok) return null;
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?fields=name,size,mimeType&key=${DRIVE_KEY}`);
+    if (!r.ok) return { denied: true, status: r.status };
     const j = await r.json();
-    return { name: j.name, size: Number(j.size) || null };
+    return { name: j.name, size: Number(j.size) || null, mimeType: j.mimeType || '' };
   } catch { return null; }
 }
+
+// Type d'affichage d'un fichier : 'video' (lecteur vidéo) ou un type « page par page »
+export function kindOf(mimeType = '', name = '') {
+  const ext = (name.match(/\.(\w+)$/)?.[1] || '').toLowerCase();
+  if (mimeType.startsWith('video/') || mimeType.startsWith('audio/') || ['mp4', 'mov', 'm4v', 'webm', 'mkv'].includes(ext)) return 'video';
+  if (mimeType === 'application/pdf' || ext === 'pdf') return 'pdf';
+  if (mimeType === 'image/vnd.adobe.photoshop' || ext === 'psd' || ext === 'psb') return 'psd';
+  if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || ext === 'docx') return 'docx';
+  if (mimeType === 'image/svg+xml' || ext === 'svg') return 'image';
+  if (mimeType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'webp', 'gif', 'avif'].includes(ext)) return 'image';
+  if (/^application\/vnd\.google-apps\.(document|presentation|spreadsheet|drawing)$/.test(mimeType)) return 'gdoc';
+  return null;
+}
+export const KIND_LABEL = { video: 'Vidéo', image: 'Image', pdf: 'PDF', psd: 'Photoshop', docx: 'Word', gdoc: 'Google Docs' };
