@@ -130,16 +130,20 @@ export default function Dashboard() {
   if (!ready) return <Notice title="Chargement…" />;
   if (!user) {
     return (
-      <Notice title="Vos reviews" text="Espace réservé aux hôtes : connecte-toi avec ton compte Google.">
-        <button onClick={() => signIn().catch((e) => setErr(e.message))}>Se connecter avec Google</button>
+      <Notice title="Review" text="Outil privé de review vidéo. Il n’est pas ouvert au public : l’accès se donne au cas par cas, sur demande. Si on t’a envoyé un lien de review, ouvre directement ce lien.">
+        <div className="row" style={{ flexWrap: 'wrap' }}>
+          <a className="btn-link" href="https://nocturnz.xyz/review/">Demander un accès</a>
+          <button className="ghost" onClick={() => signIn().catch((e) => setErr(e.message))}>J’ai déjà un accès</button>
+        </div>
         {err && <p className="mut" style={{ marginTop: 14 }}>{err}</p>}
       </Notice>
     );
   }
   if (denied) {
     return (
-      <Notice title="Accès réservé" text="Ce compte n’est pas autorisé à créer des reviews. Les invités n’ont pas besoin de passer par ici : ils utilisent le lien qu’on leur a envoyé.">
+      <Notice title="Pas d’accès pour ce compte" text="Review n’est pas ouvert au public : les comptes qui créent des reviews sont ajoutés un par un, sur demande. Les clients n’ont pas besoin de passer par ici, ils utilisent le lien de review qu’on leur a envoyé.">
         <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={signOut}>Changer de compte</button></p>
+        <p style={{ marginTop: 14 }}><a className="btn-link" href="https://nocturnz.xyz/review/">Demander un accès</a></p>
       </Notice>
     );
   }
