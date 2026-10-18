@@ -8,7 +8,7 @@ import DrawingToolbar from './DrawingToolbar';
 import * as data from './data';
 import { videoUrl, driveMeta } from './links';
 import { peaksFromLocalMp4, peaksFromBuffer, encodePeaks, b64ToBytes } from './audioPeaks';
-import { COLORS, clamp, parse, hasMarks, Shape, toShape } from './draw';
+import { COLORS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause } from './draw';
 
 const PRESETS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
 const pad = (n) => String(n).padStart(2, '0');
@@ -140,6 +140,103 @@ function Wave({ peaks, dur, vs, span, variant, tint, low, muted }) {
   return <canvas ref={ref} className="wave" style={{ top: 0, height: '100%' }} />;
 }
 
+// mise en page mobile : bascule sur la largeur de l'écran
+function useMedia(q) {
+  const [m, setM] = useState(() => window.matchMedia(q).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(q), f = () => setM(mq.matches);
+    mq.addEventListener('change', f);
+    return () => mq.removeEventListener('change', f);
+  }, [q]);
+  return m;
+}
+
+const MIcon = ({ d }) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
+const M_ICONS = {
+  pen: <path d="m4 16 12-12 4 4L8 20H4zM13 7l4 4" />,
+  pin: <><path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z" /><circle cx="12" cy="10" r="2.2" /></>,
+  zone: <><path d="M4 6v12M20 6v12" /><path d="M8 12h8m-8 0 2.5-2.5M8 12l2.5 2.5M16 12l-2.5-2.5M16 12l-2.5 2.5" /></>,
+  camera: <><path d="M3 7h4l2-3h6l2 3h4v13H3z" /><circle cx="12" cy="13" r="3.6" /></>,
+  back: <path d="M15 5 8 12l7 7" />,
+};
+
+// Timeline mobile façon CapCut : la tête reste au centre, la timeline défile sous le doigt.
+// Glisser lentement = image par image ; deux doigts = zoom ; appui long puis glisser = sélectionner une zone.
+function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, stampF, endF, onScrub, onScrubEnd, onZoneStart, onZoneMove, onZoneEnd, onPick }) {
+  const el = useRef(null);
+  const [w, setW] = useState(360);
+  const [pps, setPps] = useState(40);              // pixels par seconde
+  const g = useRef({ pts: new Map(), start: null, pinch: null, timer: null, zone: false });
+  useEffect(() => {
+    const ro = new ResizeObserver(() => setW(el.current?.clientWidth || 360));
+    ro.observe(el.current);
+    return () => ro.disconnect();
+  }, []);
+  const span = w / pps, vs = now - span / 2;
+  const xp = (t) => `${((t - vs) / span) * 100}%`;
+  const maxF = Math.max(0, Math.ceil(dur * F) - 1);
+  const minPps = Math.max(1, w / Math.max(dur, 1)), maxPps = 400;
+
+  const down = (e) => {
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    const st = g.current;
+    st.pts.set(e.pointerId, e.clientX);
+    if (st.pts.size === 2) { // pincement : zoom de la timeline
+      clearTimeout(st.timer);
+      const [a, b] = [...st.pts.values()];
+      st.pinch = { d: Math.abs(a - b) || 1, pps };
+      return;
+    }
+    st.start = { x: e.clientX, t: now, moved: false };
+    st.timer = setTimeout(() => {
+      if (st.start && !st.start.moved && st.pts.size === 1) {
+        st.zone = true;
+        navigator.vibrate?.(12);
+        onZoneStart(clamp(Math.floor(now * F + 1e-4), 0, maxF));
+      }
+    }, 420);
+  };
+  const move = (e) => {
+    const st = g.current;
+    if (!st.pts.has(e.pointerId)) return;
+    st.pts.set(e.pointerId, e.clientX);
+    if (st.pinch && st.pts.size >= 2) {
+      const [a, b] = [...st.pts.values()];
+      setPps(clamp(st.pinch.pps * (Math.abs(a - b) / st.pinch.d), minPps, maxPps));
+      return;
+    }
+    if (!st.start) return;
+    const dx = e.clientX - st.start.x;
+    if (Math.abs(dx) > 6) { st.start.moved = true; clearTimeout(st.timer); }
+    if (!st.start.moved && !st.zone) return;
+    const f = clamp(Math.floor((st.start.t - dx / pps) * F + 1e-4), 0, maxF);
+    onScrub(f);
+    if (st.zone) onZoneMove(f);
+  };
+  const up = (e) => {
+    const st = g.current;
+    st.pts.delete(e.pointerId);
+    clearTimeout(st.timer);
+    if (st.pts.size >= 1) return;
+    if (st.zone) onZoneEnd(); else if (st.start?.moved) onScrubEnd();
+    st.start = null; st.pinch = null; st.zone = false;
+  };
+
+  return (
+    <div className="m-track" ref={el} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+      {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
+      {dur > 0 && tops.map((c) => c.t_end
+        ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
+            onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />
+        : <div key={c.id} className={`mk ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t) }} onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />)}
+      {dur > 0 && endF != null && <div className="selzone" style={{ left: xp(stampF / F), width: `${(((endF - stampF) / F) / span) * 100}%` }} />}
+      {dur > 0 && <div className="m-edge" style={{ left: xp(0) }} />}
+      {dur > 0 && <div className="m-edge" style={{ left: xp(dur) }} />}
+      <div className="m-head" />
+    </div>
+  );
+}
+
 // icônes (traits fins, héritent de la couleur du texte)
 
 // API iframe YouTube, chargée une seule fois
@@ -214,6 +311,10 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [nativeSize, setNativeSize] = useState(null);
   const [monitorBarHeight, setMonitorBarHeight] = useState(44);
   const [expanded, setExpanded] = useState(false);
+  const mobile = useMedia('(max-width: 760px)');
+  const [sheet, setSheet] = useState(null);      // tiroir des commentaires : null | 'list' | 'compose'
+  const [zoneArm, setZoneArm] = useState(false); // bouton « Zone » : début posé, en attente de la fin
+  const noteRef = useRef(null);
   const [compareN, setCompareN] = useState(initialCompare); // version affichée à droite, ou null
   const [slaveDur, setSlaveDur] = useState(0);
   const [soundFrom, setSoundFrom] = useState('a');           // 'a' = version courante, 'b' = version comparée
@@ -517,7 +618,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [mobile]);
   const zoomBy = (k) => setView((v) => {
     const D = dur, minSpan = Math.min(D, 12 / F);
     const sp = clamp(v.span * k, minSpan, D);
@@ -825,84 +926,8 @@ export default function Review({ aid, title, admin, back = null, deadline = null
 
   const flatPeaks = useMemo(() => ({ l: new Uint8Array(400).fill(16), r: null }), []); // onde plate de remplacement
 
-  return (
-    <div className={`review ${expanded ? 'review-expanded' : ''}`}>
-      <div className="stage">
-        <header className="topbar">
-          <div>
-            <div className="review-context">{back
-              ? <Link className="eyebrow back" to={back.to}>← {back.label}</Link>
-              : <div className="eyebrow">Review{isYt ? ' · YouTube' : ''}</div>}{deadline}</div>
-            <h1 className="title">{title}</h1>
-            {admin && (
-              <div className="status-line">
-                {approval
-                  ? <><span className={`state ${approval.status}`}>{approval.status === 'approved' ? 'Validée par le client' : 'Le client demande des modifications'}</span> · {approval.by}, {fmtDay(approval.at)}</>
-                  : 'En attente de l’avis du client'}
-              </div>
-            )}
-          </div>
-          <div className="row">
-            <button className="ghost sm" aria-pressed={expanded} onClick={() => setExpanded((value) => !value)} title={expanded ? 'Revenir à la vue avec commentaires · Échap' : 'Agrandir le lecteur et masquer les commentaires'}>{expanded ? 'Réduire' : 'Agrandir'}</button>
-            {cmpable.length > 0 && <button className={compareN ? 'ghost on' : 'ghost'} onClick={toggleCompare} title="Voir deux versions côte à côte, lecture synchronisée">Comparer</button>}
-            {versions.length > 1 && (
-              <div className="seg-ctl" role="group" aria-label="Version">
-                {versions.map((x) => (
-                  <button key={x.n} className={x.n === currentN ? 'on' : ''} onClick={() => x.n !== currentN && goVersion(x.n)}
-                    title={x.status === 'approved' ? 'Version validée' : x.status === 'changes' ? 'Modifications demandées' : ''}>
-                    v{x.n}{x.status === 'approved' ? ' ✓' : ''}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="seg-ctl" role="group" aria-label="Mode d’affichage">
-              <button className={pro ? '' : 'on'} onClick={() => pro && togglePro()}>Simple</button>
-              <button className={pro ? 'on' : ''} onClick={() => !pro && togglePro()} title="Timecode à l’image, zoom, plage In/Out, réglages de l’onde">Pro</button>
-            </div>
-          </div>
-        </header>
-
-        {currentN !== latestN && !compareN && (
-          <div className="banner">
-            <span>Tu regardes la v{currentN}. La version la plus récente est la v{latestN}.</span>
-            <button className="ghost sm" onClick={() => goVersion(latestN)}>Voir la v{latestN}</button>
-          </div>
-        )}
-        {!admin && (() => { const mine = approval && name.trim() && approval.by === name.trim(); return (
-          <div className="approval">
-            <div>
-              {approval
-                ? <><span className={`state ${approval.status}`}>{mine
-                    ? (approval.status === 'approved' ? 'Tu as validé cette version' : 'Tu as demandé des modifications')
-                    : `${approval.by} ${approval.status === 'approved' ? 'a validé cette version' : 'a demandé des modifications'}`}</span><span className="mut"> · {fmtDay(approval.at)}</span></>
-                : <span><strong>Ton avis sur la v{currentN}</strong><span className="mut"> · Il s’applique à cette version.</span></span>}
-            </div>
-            <div className="row">
-              {approval && <button className="link" onClick={() => setReview(null)}>{mine ? 'Changer d’avis' : 'Retirer l’avis'}</button>}
-              <button className={approval?.status === 'changes' ? 'ghost sm on' : 'ghost sm'} onClick={() => setReview('changes')}>Demander des changements</button>
-              <button className={approval?.status === 'approved' ? 'ok sm' : 'sm'} onClick={() => setReview('approved')}>{approval?.status === 'approved' ? '✓ Approuvée' : 'Approuver'}</button>
-            </div>
-          </div>
-        ); })()}
-
-        {compareN && (
-          <div className="cmp-bar">
-            <span className="mut">Comparer la v{currentN} avec</span>
-            <div className="seg-ctl sm">
-              {cmpable.map((x) => (
-                <button key={x.n} className={x.n === compareN ? 'on' : ''} onClick={() => setCmp(x.n)}>v{x.n}</button>
-              ))}
-            </div>
-            <div className="spacer" />
-            <span className="mut">Son</span>
-            <div className="seg-ctl sm">
-              <button className={soundFrom === 'a' ? 'on' : ''} onClick={() => setSoundFrom('a')}>v{currentN}</button>
-              <button className={soundFrom === 'b' ? 'on' : ''} onClick={() => setSoundFrom('b')}>v{compareN}</button>
-            </div>
-            <button className="ghost sm" onClick={() => setCmp(null)}>Fermer</button>
-          </div>
-        )}
-
+  // blocs partagés par la mise en page ordinateur et la mise en page mobile
+  const monitorView = (
         <div className={`vstage ${compareN ? 'two' : ''}`} ref={vstage} style={{ '--monitor-toolbar-h': `${monitorBarHeight}px` }}>
         <VideoMonitor aid={aid} viewportRef={wrap} fit={fit} nativeSize={nativeSize} box={box} playing={playing} onPlay={playPause} onStep={stepF} toolsOpen={toolsOpen} onTools={toggleTools} drawingTools={<DrawingToolbar tool={tool} onTool={pickTool} color={color} onColor={setColor} canUndo={!!shapes.length || !!pin} onUndo={() => shapes.length ? setShapes((items) => items.slice(0, -1)) : setPin(null)} />} onToolbarHeight={setMonitorBarHeight} sessionKey={sessionKey} sourceIdentity={sourceIdentity} ready={dur > 0} onCapture={capture} captureDisabled={isYt || source === 'drive'} capturing={capturing}>
           {compareN && <span className="pane-tag">v{currentN}</span>}
@@ -975,6 +1000,236 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           </div>
         )}
         </div>
+  );
+  const approvalView = !admin && (() => { const mine = approval && name.trim() && approval.by === name.trim(); return (
+          <div className="approval">
+            <div>
+              {approval
+                ? <><span className={`state ${approval.status}`}>{mine
+                    ? (approval.status === 'approved' ? 'Tu as validé cette version' : 'Tu as demandé des modifications')
+                    : `${approval.by} ${approval.status === 'approved' ? 'a validé cette version' : 'a demandé des modifications'}`}</span><span className="mut"> · {fmtDay(approval.at)}</span></>
+                : <span><strong>Ton avis sur la v{currentN}</strong><span className="mut"> · Il s’applique à cette version.</span></span>}
+            </div>
+            <div className="row">
+              {approval && <button className="link" onClick={() => setReview(null)}>{mine ? 'Changer d’avis' : 'Retirer l’avis'}</button>}
+              <button className={approval?.status === 'changes' ? 'ghost sm on' : 'ghost sm'} onClick={() => setReview('changes')}>Demander des changements</button>
+              <button className={approval?.status === 'approved' ? 'ok sm' : 'sm'} onClick={() => setReview('approved')}>{approval?.status === 'approved' ? '✓ Approuvée' : 'Approuver'}</button>
+            </div>
+          </div>
+        ); })();
+  const filtersView = (
+        <div className="filters">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <div className="seg-ctl sm">
+              {[['all', 'Tous'], ['open', 'À traiter'], ['done', 'Résolus']].map(([k, l]) => (
+                <button key={k} className={status === k ? 'on' : ''} onClick={() => setStatus(k)}>{l}</button>
+              ))}
+            </div>
+            {pro && <button className={onlyMarked ? 'ghost sm on' : 'ghost sm'} onClick={() => setOnlyMarked((v) => !v)}>Dessinés</button>}
+          </div>
+          {pro && (
+            <div className="row">
+              <input placeholder="Rechercher…" value={q} onChange={(e) => setQ(e.target.value)} />
+              <select value={author} onChange={(e) => setAuthor(e.target.value)}>
+                <option value="">Tous</option>
+                {authors.map((a) => <option key={a}>{a}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+  );
+  const commentList = (
+        <div className="list">
+          {shown.map((c) => (
+            <div key={c.id} data-comment-id={c.id} className={`cm ${c.resolved ? 'done' : ''} ${sel === c.id ? 'sel' : ''}`}
+              onClick={() => { setSel(c.id); seekT(c.t); if (mobile) setSheet(null); }}>
+              <div className="cm-head">
+                <span>
+                  <span className="num">{numberOf[c.id]}</span><span className="tc">{rangeLabel(c)}</span> · <strong>{c.author}</strong>
+                  <span className="when" title={new Date(c.created_at).toLocaleString('fr-BE')}>{fmtWhen(c.created_at)}</span>
+                  {hasMarks(c) && <span className="tag">dessin</span>}
+                </span>
+                <span className="row" style={{ gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                  {pro && <button className="ghost sm" title="Copier le lien vers ce commentaire" onClick={() => copyLink(c)}>Lien</button>}
+                  <button className="ghost sm" onClick={() => toggle(c)}>{c.resolved ? 'Rouvrir' : '✓ Résolu'}</button>
+                  {admin && <button className="ghost sm" aria-label="Supprimer" onClick={() => del(c)}>✕</button>}
+                </span>
+              </div>
+              <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>
+              {kids(c.id).map((r) => (
+                <div key={r.id} className="reply">
+                  <strong>{r.author}</strong> <span className="when">{fmtWhen(r.created_at)}</span>
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{r.body}</div>
+                </div>
+              ))}
+              <div onClick={(e) => e.stopPropagation()}>
+                {replyTo === c.id ? (
+                  <div className="row" style={{ marginTop: 10 }}>
+                    <input autoFocus placeholder="Répondre…" value={replyText} onChange={(e) => setReplyText(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') sendReply(); if (e.key === 'Escape') setReplyTo(null); }} />
+                    <button className="sm" onClick={sendReply} disabled={!replyText.trim() || !name.trim()}>OK</button>
+                  </div>
+                ) : (
+                  <button className="link" onClick={() => { setReplyTo(c.id); setReplyText(''); }}>Répondre</button>
+                )}
+              </div>
+            </div>
+          ))}
+          {!shown.length && <p className="mut">{tops.length ? 'Aucun résultat.' : 'Aucun commentaire.'}</p>}
+        </div>
+  );
+  const composeView = (
+        <div className="compose">
+          {askName
+            ? <div style={{ display: 'grid', gap: 6 }}>
+                {needName && <span className="mut">Indique ton prénom pour valider cette version, puis clique à nouveau.</span>}
+                <input placeholder="Ton prénom" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+            : <div className="compose-who mut">Tu commentes en tant que&nbsp;<strong style={{ color: 'var(--txt)' }}>{name}</strong>&nbsp;·&nbsp;<button className="link" style={{ padding: 0 }} onClick={() => setEditName(true)}>changer</button></div>}
+          {pro && (
+            <div className="row" style={{ flexWrap: 'wrap' }}>
+              <button className="ghost sm" onClick={() => { vid.current.pause(); setStampF(curF); if (endF != null && endF <= curF) setEndF(null); }}>In {label(stampF / F)}</button>
+              <button className="ghost sm" onClick={() => { vid.current.pause(); if (curF > stampF) setEndF(curF); }}>Out {endF != null ? label(endF / F) : '—'}</button>
+              {endF != null && <button className="link" style={{ padding: 0 }} onClick={() => setEndF(null)}>retirer la plage</button>}
+            </div>
+          )}
+          {!pro && endF != null && (
+            <div className="zone-line mut">Zone {draftLabel} · <button className="link" style={{ padding: 0 }} onClick={() => setEndF(null)}>retirer la zone</button></div>
+          )}
+          <textarea ref={noteRef} rows={3} placeholder={endF != null ? `Ta note sur ${draftLabel}…` : `Ton commentaire à ${draftLabel}…`} value={body}
+            onFocus={beginCompose} onChange={(e) => setBody(e.target.value)}
+            onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send(); }} />
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <span className="mut">{drawing ? `${shapes.length + (pin ? 1 : 0)} dessin(s) joint(s)` : '⌘ + Entrée pour envoyer'}</span>
+            <button onClick={send} disabled={!body.trim() || !name.trim()}>Envoyer</button>
+          </div>
+        </div>
+  );
+
+  // --- mobile : zone par bouton (début puis fin), tiroir des commentaires ---
+  const zoneTap = () => {
+    vid.current?.pause();
+    if (!zoneArm) { setSel(null); setStampF(curF); setEndF(null); setZoneArm(true); return; }
+    if (curF > stampF) setEndF(curF); else if (curF < stampF) { setEndF(stampF); setStampF(curF); }
+    setZoneArm(false); setToolsOpen(true);
+  };
+  const openSheet = (mode) => { vid.current?.pause(); setSheet(mode); if (mode === 'compose') setTimeout(() => noteRef.current?.focus(), 260); };
+  const mZone = useRef(null);
+
+  if (mobile) {
+    const shortStatus = approval ? (approval.status === 'approved' ? 'Validée' : 'Modifications demandées') : admin ? 'En attente de l’avis du client' : `v${currentN}`;
+    return (
+      <div className="review mobile">
+        <header className="m-top">
+          {back ? <Link className="m-icon" to={back.to} aria-label={`Retour : ${back.label}`}><MIcon d={M_ICONS.back} /></Link> : <span />}
+          <div className="m-title"><b>{title}</b><span>{shortStatus}</span></div>
+          {versions.length > 1 ? (
+            <select className="m-version" value={currentN} onChange={(e) => goVersion(Number(e.target.value))} aria-label="Version">
+              {versions.map((x) => <option key={x.n} value={x.n}>v{x.n}{x.status === 'approved' ? ' ✓' : ''}</option>)}
+            </select>
+          ) : <span className="m-version">v{currentN}</span>}
+        </header>
+        {currentN !== latestN && <button className="m-banner" onClick={() => goVersion(latestN)}>Version récente : v{latestN} · voir</button>}
+        {approvalView}
+        {monitorView}
+        {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
+        <div className="m-time"><span className="cur">{label(now)}</span><span className="tot"> / {label(dur || 0)}</span></div>
+        <MobileTrack dur={dur} now={now} F={F} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
+          tops={tops} stampF={stampF} endF={endF}
+          onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
+          onZoneStart={(f) => { mZone.current = f; vid.current?.pause(); setSel(null); setZoneArm(false); setStampF(f); setEndF(null); setSelecting(true); }}
+          onZoneMove={(f) => { const z = mZone.current; setStampF(Math.min(z, f)); setEndF(f === z ? null : Math.max(z, f)); }}
+          onZoneEnd={() => { setSelecting(false); setToolsOpen(true); }}
+          onPick={(c) => { setSel(c.id); seekT(c.t); }} />
+        <p className="m-hint">{zoneArm ? 'Fais défiler jusqu’à la fin de la zone, puis touche « Fin »' : endF != null ? `Zone ${draftLabel} · ` : 'Glisse la timeline · appui long : zone · deux doigts : zoom'}
+          {!zoneArm && endF != null && <button className="link" onClick={() => setEndF(null)}>retirer</button>}</p>
+        <div className="m-tools" role="toolbar" aria-label="Outils">
+          <button onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}>{playing ? <IconPause /> : <IconPlay />}<span>{playing ? 'Pause' : 'Lecture'}</span></button>
+          <button className={toolsOpen && tool !== 'pin' ? 'on' : ''} onClick={() => { if (toolsOpen && tool !== 'pin') { setToolsOpen(false); setTool(null); } else { vid.current?.pause(); setToolsOpen(true); setTool(tool && tool !== 'pin' ? tool : 'pen'); } }}><MIcon d={M_ICONS.pen} /><span>Dessiner</span></button>
+          <button className={tool === 'pin' ? 'on' : ''} onClick={() => { vid.current?.pause(); setToolsOpen(true); setTool(tool === 'pin' ? null : 'pin'); }}><MIcon d={M_ICONS.pin} /><span>Repère</span></button>
+          <button className={zoneArm || endF != null ? 'on' : ''} onClick={zoneTap}><MIcon d={M_ICONS.zone} /><span>{zoneArm ? 'Fin' : 'Zone'}</span></button>
+          {!(isYt || source === 'drive') && <button onClick={capture} disabled={capturing}><MIcon d={M_ICONS.camera} /><span>Capture</span></button>}
+        </div>
+        <div className="m-bar">
+          <button className="ghost" onClick={() => openSheet('list')}>{tops.length} commentaire{tops.length > 1 ? 's' : ''}</button>
+          <button onClick={() => openSheet('compose')}>{drawing ? `Commenter (${shapes.length + (pin ? 1 : 0)} dessin${shapes.length + (pin ? 1 : 0) > 1 ? 's' : ''})` : 'Commenter'}</button>
+        </div>
+        {sheet && <div className="m-veil" onClick={() => setSheet(null)} />}
+        <section className={`m-sheet ${sheet ? `open ${sheet}` : ''}`} aria-hidden={!sheet}>
+          <button className="m-handle" aria-label="Fermer les commentaires" onClick={() => setSheet(null)}><i /></button>
+          <div className="m-sheet-head"><h2>Commentaires</h2><CommentNavigation comments={shown} currentId={sel} position={curF / F} onSelect={(c) => { setSel(c.id); seekT(c.t); setSheet(null); }} /></div>
+          {sheet === 'list' && filtersView}
+          {sheet === 'list' && commentList}
+          {composeView}
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`review ${expanded ? 'review-expanded' : ''}`}>
+      <div className="stage">
+        <header className="topbar">
+          <div>
+            <div className="review-context">{back
+              ? <Link className="eyebrow back" to={back.to}>← {back.label}</Link>
+              : <div className="eyebrow">Review{isYt ? ' · YouTube' : ''}</div>}{deadline}</div>
+            <h1 className="title">{title}</h1>
+            {admin && (
+              <div className="status-line">
+                {approval
+                  ? <><span className={`state ${approval.status}`}>{approval.status === 'approved' ? 'Validée par le client' : 'Le client demande des modifications'}</span> · {approval.by}, {fmtDay(approval.at)}</>
+                  : 'En attente de l’avis du client'}
+              </div>
+            )}
+          </div>
+          <div className="row">
+            <button className="ghost sm" aria-pressed={expanded} onClick={() => setExpanded((value) => !value)} title={expanded ? 'Revenir à la vue avec commentaires · Échap' : 'Agrandir le lecteur et masquer les commentaires'}>{expanded ? 'Réduire' : 'Agrandir'}</button>
+            {cmpable.length > 0 && <button className={compareN ? 'ghost on' : 'ghost'} onClick={toggleCompare} title="Voir deux versions côte à côte, lecture synchronisée">Comparer</button>}
+            {versions.length > 1 && (
+              <div className="seg-ctl" role="group" aria-label="Version">
+                {versions.map((x) => (
+                  <button key={x.n} className={x.n === currentN ? 'on' : ''} onClick={() => x.n !== currentN && goVersion(x.n)}
+                    title={x.status === 'approved' ? 'Version validée' : x.status === 'changes' ? 'Modifications demandées' : ''}>
+                    v{x.n}{x.status === 'approved' ? ' ✓' : ''}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="seg-ctl" role="group" aria-label="Mode d’affichage">
+              <button className={pro ? '' : 'on'} onClick={() => pro && togglePro()}>Simple</button>
+              <button className={pro ? 'on' : ''} onClick={() => !pro && togglePro()} title="Timecode à l’image, zoom, plage In/Out, réglages de l’onde">Pro</button>
+            </div>
+          </div>
+        </header>
+
+        {currentN !== latestN && !compareN && (
+          <div className="banner">
+            <span>Tu regardes la v{currentN}. La version la plus récente est la v{latestN}.</span>
+            <button className="ghost sm" onClick={() => goVersion(latestN)}>Voir la v{latestN}</button>
+          </div>
+        )}
+        {approvalView}
+
+        {compareN && (
+          <div className="cmp-bar">
+            <span className="mut">Comparer la v{currentN} avec</span>
+            <div className="seg-ctl sm">
+              {cmpable.map((x) => (
+                <button key={x.n} className={x.n === compareN ? 'on' : ''} onClick={() => setCmp(x.n)}>v{x.n}</button>
+              ))}
+            </div>
+            <div className="spacer" />
+            <span className="mut">Son</span>
+            <div className="seg-ctl sm">
+              <button className={soundFrom === 'a' ? 'on' : ''} onClick={() => setSoundFrom('a')}>v{currentN}</button>
+              <button className={soundFrom === 'b' ? 'on' : ''} onClick={() => setSoundFrom('b')}>v{compareN}</button>
+            </div>
+            <button className="ghost sm" onClick={() => setCmp(null)}>Fermer</button>
+          </div>
+        )}
+
+        {monitorView}
 
         {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
         <div className={`track ${pro ? 'pro' : ''} ${selecting ? 'selecting' : ''}`} ref={track}
@@ -1087,90 +1342,11 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           <h2>Commentaires</h2>
           <CommentNavigation comments={shown} currentId={sel} position={curF / F} onSelect={(c) => { setSel(c.id); seekT(c.t); }} />
         </div>
-        <div className="filters">
-          <div className="row" style={{ justifyContent: 'space-between' }}>
-            <div className="seg-ctl sm">
-              {[['all', 'Tous'], ['open', 'À traiter'], ['done', 'Résolus']].map(([k, l]) => (
-                <button key={k} className={status === k ? 'on' : ''} onClick={() => setStatus(k)}>{l}</button>
-              ))}
-            </div>
-            {pro && <button className={onlyMarked ? 'ghost sm on' : 'ghost sm'} onClick={() => setOnlyMarked((v) => !v)}>Dessinés</button>}
-          </div>
-          {pro && (
-            <div className="row">
-              <input placeholder="Rechercher…" value={q} onChange={(e) => setQ(e.target.value)} />
-              <select value={author} onChange={(e) => setAuthor(e.target.value)}>
-                <option value="">Tous</option>
-                {authors.map((a) => <option key={a}>{a}</option>)}
-              </select>
-            </div>
-          )}
-        </div>
+        {filtersView}
 
-        <div className="list">
-          {shown.map((c) => (
-            <div key={c.id} data-comment-id={c.id} className={`cm ${c.resolved ? 'done' : ''} ${sel === c.id ? 'sel' : ''}`}
-              onClick={() => { setSel(c.id); seekT(c.t); }}>
-              <div className="cm-head">
-                <span>
-                  <span className="num">{numberOf[c.id]}</span><span className="tc">{rangeLabel(c)}</span> · <strong>{c.author}</strong>
-                  <span className="when" title={new Date(c.created_at).toLocaleString('fr-BE')}>{fmtWhen(c.created_at)}</span>
-                  {hasMarks(c) && <span className="tag">dessin</span>}
-                </span>
-                <span className="row" style={{ gap: 4 }} onClick={(e) => e.stopPropagation()}>
-                  {pro && <button className="ghost sm" title="Copier le lien vers ce commentaire" onClick={() => copyLink(c)}>Lien</button>}
-                  <button className="ghost sm" onClick={() => toggle(c)}>{c.resolved ? 'Rouvrir' : '✓ Résolu'}</button>
-                  {admin && <button className="ghost sm" aria-label="Supprimer" onClick={() => del(c)}>✕</button>}
-                </span>
-              </div>
-              <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>
-              {kids(c.id).map((r) => (
-                <div key={r.id} className="reply">
-                  <strong>{r.author}</strong> <span className="when">{fmtWhen(r.created_at)}</span>
-                  <div style={{ whiteSpace: 'pre-wrap' }}>{r.body}</div>
-                </div>
-              ))}
-              <div onClick={(e) => e.stopPropagation()}>
-                {replyTo === c.id ? (
-                  <div className="row" style={{ marginTop: 10 }}>
-                    <input autoFocus placeholder="Répondre…" value={replyText} onChange={(e) => setReplyText(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') sendReply(); if (e.key === 'Escape') setReplyTo(null); }} />
-                    <button className="sm" onClick={sendReply} disabled={!replyText.trim() || !name.trim()}>OK</button>
-                  </div>
-                ) : (
-                  <button className="link" onClick={() => { setReplyTo(c.id); setReplyText(''); }}>Répondre</button>
-                )}
-              </div>
-            </div>
-          ))}
-          {!shown.length && <p className="mut">{tops.length ? 'Aucun résultat.' : 'Aucun commentaire.'}</p>}
-        </div>
+        {commentList}
 
-        <div className="compose">
-          {askName
-            ? <div style={{ display: 'grid', gap: 6 }}>
-                {needName && <span className="mut">Indique ton prénom pour valider cette version, puis clique à nouveau.</span>}
-                <input placeholder="Ton prénom" value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-            : <div className="compose-who mut">Tu commentes en tant que&nbsp;<strong style={{ color: 'var(--txt)' }}>{name}</strong>&nbsp;·&nbsp;<button className="link" style={{ padding: 0 }} onClick={() => setEditName(true)}>changer</button></div>}
-          {pro && (
-            <div className="row" style={{ flexWrap: 'wrap' }}>
-              <button className="ghost sm" onClick={() => { vid.current.pause(); setStampF(curF); if (endF != null && endF <= curF) setEndF(null); }}>In {label(stampF / F)}</button>
-              <button className="ghost sm" onClick={() => { vid.current.pause(); if (curF > stampF) setEndF(curF); }}>Out {endF != null ? label(endF / F) : '—'}</button>
-              {endF != null && <button className="link" style={{ padding: 0 }} onClick={() => setEndF(null)}>retirer la plage</button>}
-            </div>
-          )}
-          {!pro && endF != null && (
-            <div className="zone-line mut">Zone {draftLabel} · <button className="link" style={{ padding: 0 }} onClick={() => setEndF(null)}>retirer la zone</button></div>
-          )}
-          <textarea rows={3} placeholder={endF != null ? `Ta note sur ${draftLabel}…` : `Ton commentaire à ${draftLabel}…`} value={body}
-            onFocus={beginCompose} onChange={(e) => setBody(e.target.value)}
-            onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send(); }} />
-          <div className="row" style={{ justifyContent: 'space-between' }}>
-            <span className="mut">{drawing ? `${shapes.length + (pin ? 1 : 0)} dessin(s) joint(s)` : '⌘ + Entrée pour envoyer'}</span>
-            <button onClick={send} disabled={!body.trim() || !name.trim()}>Envoyer</button>
-          </div>
-        </div>
+        {composeView}
       </aside>
     </div>
   );
