@@ -35,6 +35,9 @@ service cloud.firestore {
     function shareOk(d) {
       return d.access in ['link', 'invite'] && d.invited is list && d.invited.size() <= 50;
     }
+    function deadlineOk(d) {
+      return d.get('dueDate', null) == null || (d.dueDate is string && d.dueDate.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'));
+    }
 
     // la liste des hôtes ne passe jamais par un client (gérée avec le script scripts/seed-hosts.mjs)
     match /config/{doc} {
@@ -60,14 +63,14 @@ service cloud.firestore {
       allow list: if owns(resource.data);
       allow create: if isHost()
         && request.resource.data.owner == request.auth.uid
-        && request.resource.data.keys().hasOnly(['name', 'owner', 'created', 'expiresAt', 'revoked', 'access', 'invited'])
+        && request.resource.data.keys().hasOnly(['name', 'owner', 'created', 'expiresAt', 'revoked', 'access', 'invited', 'dueDate'])
         && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 120
-        && shareOk(request.resource.data);
+        && shareOk(request.resource.data) && deadlineOk(request.resource.data);
       allow update: if owns(resource.data)
         && request.resource.data.owner == resource.data.owner
-        && request.resource.data.keys().hasOnly(['name', 'owner', 'created', 'expiresAt', 'revoked', 'access', 'invited'])
+        && request.resource.data.keys().hasOnly(['name', 'owner', 'created', 'expiresAt', 'revoked', 'access', 'invited', 'dueDate'])
         && request.resource.data.name is string && request.resource.data.name.size() >= 1 && request.resource.data.name.size() <= 120
-        && shareOk(request.resource.data);
+        && shareOk(request.resource.data) && deadlineOk(request.resource.data);
       allow delete: if owns(resource.data);
     }
 

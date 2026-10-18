@@ -5,6 +5,7 @@ import { useAuth } from './AuthContext';
 import * as data from './data';
 import { AddAssetForm, AssetCard, AssetTile, DeleteButton, DropBar, HostingProvider, LinkLine, SharePanel, StorageGauge } from './library';
 import Notice from './Notice';
+import ProjectDeadline, { DeadlineBadge } from './ProjectDeadline';
 
 export default function ProjectPage() {
   const { pid } = useParams();
@@ -50,13 +51,14 @@ export default function ProjectPage() {
   if (!admin) {
     return (
       <div className="wrap">
-        <div className="brand"><i /> Review</div>
+        <div className="brand"><span>nocturnz</span><b>/ review</b></div>
         <div className="eyebrow">Projet</div>
         <h1>{project.name}</h1>
+        <DeadlineBadge value={project.dueDate} label />
         <div className="tiles">
           {assets.map((a) => <AssetTile key={a.id} a={a} />)}
         </div>
-        {!assets.length && <p className="mut">Ce projet ne contient encore aucune vidéo.</p>}
+        {!assets.length && <p className="mut empty-line">Projet vide</p>}
       </div>
     );
   }
@@ -82,6 +84,7 @@ export default function ProjectPage() {
           <h1 title="Cliquer pour renommer" onClick={() => setRenaming(true)} style={{ cursor: 'text' }}>{project.name}</h1>
         )}
         <div className="row">
+          <ProjectDeadline value={project.dueDate} onSave={async (date) => { await data.setProjectDeadline(pid, date); await reload(); }} />
           <SharePanel item={project} kind="projects" run={run} />
           <DeleteButton label="Supprimer le projet (ses reviews repassent dans « Sans projet »)" confirmText="Supprimer le projet ?" onConfirm={remove} />
         </div>
@@ -97,9 +100,9 @@ export default function ProjectPage() {
         <DropBar targets={[{ id: null, name: 'Sans projet' }, ...projects.filter((p) => p.id !== pid)]}
           onDropAsset={(aid, to) => { setDragging(false); if (aid) run(() => data.moveAsset(aid, to)); }} />
       )}
+      {!!assets.length && <div className="section-title project-assets-title"><span>01</span><b>Assets</b></div>}
       {assets.map((a) => <AssetCard key={a.id} a={a} projects={projects} onChange={reload} onDragging={setDragging} />)}
-      {assets.length > 0 && !dragging && <p className="mut hint">Astuce : glisse une review pour la sortir du projet ou la mettre dans un autre.</p>}
-      {!assets.length && <p className="mut">Projet vide : importe un fichier ou colle un lien ci-dessus.</p>}
+      {!assets.length && <p className="mut empty-line">Aucun élément</p>}
     </div>
     </HostingProvider>
   );

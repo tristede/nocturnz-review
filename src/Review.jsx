@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import VideoMonitor from './VideoMonitor';
+import CommentNavigation from './CommentNavigation';
+import { readSession, writeSession } from './reviewSession';
+import { captureAnnotatedFrame } from './captureFrame';
+import DrawingToolbar from './DrawingToolbar';
 import * as data from './data';
 import { videoUrl, driveMeta } from './links';
 import { peaksFromLocalMp4, peaksFromBuffer, encodePeaks, b64ToBytes } from './audioPeaks';
-import { COLORS, TOOLS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause, IconChevron } from './draw';
+import { COLORS, clamp, parse, hasMarks, Shape, toShape } from './draw';
 
 const PRESETS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
 const pad = (n) => String(n).padStart(2, '0');
@@ -59,7 +64,7 @@ const WAVE_STYLES = [['bars', 'Barres'], ['solid', 'Plein'], ['line', 'Ligne']];
 
 // onde sonore : suit exactement la vue (zoom/défilement) de la timeline ; les deux canaux sont fusionnés
 // low = onde posée en bas de la piste au lieu d'être centrée
-function Wave({ peaks, dur, vs, span, top, variant, tint, low, muted }) {
+function Wave({ peaks, dur, vs, span, variant, tint, low, muted }) {
   const ref = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const merged = useMemo(() => (peaks.r ? peaks.l.map((v, i) => Math.max(v, peaks.r[i])) : peaks.l), [peaks]);
@@ -89,12 +94,16 @@ function Wave({ peaks, dur, vs, span, top, variant, tint, low, muted }) {
         for (let i = i0; i < i1; i++) if (arr[i] > m) m = arr[i];
         return m / 255;
       };
-      const yOf = (hh) => (low ? y0 + hl - hh : y0 + (hl - hh) / 2); // haut d'une barre de hauteur hh
+      const axis = y0 + hl / 2;
+      const base = low ? y0 + hl - 1 : axis;
+      // En bas : les crêtes atteignent l'axe central. Centrée : même amplitude de chaque côté.
+      const maxHeight = low ? hl / 2 - 1 : hl * 0.64;
+      const yOf = (hh) => (low ? base - hh : axis - hh / 2);
       if (variant === 'bars') {
         for (let x = 0; x < w; x += 4) {
           const v = col(x, x + 4);
           if (v == null) continue;
-          const hh = Math.max(2, v * hl * 0.92);
+          const hh = Math.max(1, v * maxHeight);
           g.fillStyle = color(v);
           g.fillRect(x, yOf(hh), 3, hh);
         }
@@ -102,33 +111,33 @@ function Wave({ peaks, dur, vs, span, top, variant, tint, low, muted }) {
         for (let x = 0; x < w; x++) {
           const v = col(x, x + 1);
           if (v == null) continue;
-          const hh = Math.max(1, v * hl * (low ? 0.92 : 1));
+          const hh = Math.max(1, v * maxHeight);
           g.fillStyle = color(v);
           g.fillRect(x, yOf(hh), 1, hh);
         }
-      } else { // line : un seul trait lisse qui monte avec le volume, depuis le milieu (centrée) ou depuis le bas
+      } else { // un seul trait ; les pics non signés alternent autour de l'axe en mode centré
         g.lineWidth = 1.6; g.lineCap = 'round'; g.lineJoin = 'round';
-        const step = 2, base = low ? y0 + hl - 1 : y0 + hl / 2, room = low ? hl - 3 : hl / 2 - 2;
+        const step = 3, room = low ? maxHeight : maxHeight / 2;
         let px = null, py = null;
         for (let x = 0; x < w; x += step) {
           const v = col(x, x + step);
           if (v == null) { px = null; continue; }
-          const y = base - v * room;
+          const polarity = Math.round(x / step) % 2 ? -1 : 1;
+          const y = base + (low ? -1 : polarity) * v * room;
           if (px != null) {
             g.strokeStyle = color(v);
-            g.beginPath(); g.moveTo(px, py); g.lineTo(x, y); g.stroke();
+            g.beginPath(); g.moveTo(px, py); g.bezierCurveTo(px + step / 2, py, x - step / 2, y, x, y); g.stroke();
           }
           px = x; py = y;
         }
-        // repère discret de la ligne de base
-        g.fillStyle = 'rgba(255,255,255,.07)';
-        g.fillRect(0, Math.round(base), w, 1);
       }
     };
 
+    g.fillStyle = 'rgba(203,179,236,.12)';
+    g.fillRect(0, Math.floor(h / 2), w, 1);
     lane(merged, 0, h);
   }, [peaks, merged, dur, vs, span, size, variant, tint, low, muted]);
-  return <canvas ref={ref} className="wave" style={{ top, height: `calc(100% - ${top}px)` }} />;
+  return <canvas ref={ref} className="wave" style={{ top: 0, height: '100%' }} />;
 }
 
 // icônes (traits fins, héritent de la couleur du texte)
@@ -191,13 +200,20 @@ function createYtShim({ host, videoId, box, onDuration, onState, onTime }) {
   return { shim, destroy() { dead = true; clearInterval(poll); try { player?.destroy(); } catch {} host.remove(); } };
 }
 
-export default function Review({ aid, title, admin, back = null, initialFps, initialPeaks, source, videoId, mediaUrl = null, fileBytes = null, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
+export default function Review({ aid, title, admin, back = null, deadline = null, initialFps, initialPeaks, source, videoId, mediaUrl = null, fileBytes = null, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
   const isYt = source === 'youtube';
+  const sessionKey = `review-session:${aid}:${currentN}`, sourceIdentity = `${source}:${videoId}`;
+  const [remembered] = useState(() => readSession(sessionKey, sourceIdentity));
+  const restored = useRef(false), latestSession = useRef(null);
+  const [capturing, setCapturing] = useState(false), [captureMessage, setCaptureMessage] = useState('');
   const navigate = useNavigate();
   const [approval, setApproval] = useState(initialStatus);
   const [needName, setNeedName] = useState(false);
   const [ratio, setRatio] = useState(16 / 9);  // ratio réel de la vidéo (16:9 par défaut)
   const [fit, setFit] = useState(null);         // taille du cadre vidéo : le plus grand rectangle de ce ratio qui tient
+  const [nativeSize, setNativeSize] = useState(null);
+  const [monitorBarHeight, setMonitorBarHeight] = useState(44);
+  const [expanded, setExpanded] = useState(false);
   const [compareN, setCompareN] = useState(initialCompare); // version affichée à droite, ou null
   const [slaveDur, setSlaveDur] = useState(0);
   const [soundFrom, setSoundFrom] = useState('a');           // 'a' = version courante, 'b' = version comparée
@@ -317,9 +333,10 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
     const s = Math.min(cw / v.videoWidth, ch / v.videoHeight);
     const w = v.videoWidth * s, h = v.videoHeight * s;
     setBox({ x: (cw - w) / 2, y: (ch - h) / 2, w, h });
+    if (!isYt) setNativeSize((prev) => prev?.w === v.videoWidth && prev?.h === v.videoHeight ? prev : { w: v.videoWidth, h: v.videoHeight });
     const r = v.videoWidth / v.videoHeight;
     if (r > 0.2 && r < 6) setRatio((cur) => (Math.abs(cur - r) < 0.001 ? cur : r));
-  }, []);
+  }, [isYt]);
   useEffect(() => {
     const ro = new ResizeObserver(measure);
     if (wrap.current) ro.observe(wrap.current);
@@ -331,21 +348,21 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
     const el = vstage.current;
     if (!el) return;
     const calc = () => {
-      const w = el.clientWidth, h = el.clientHeight;
+      const w = el.clientWidth, h = Math.max(1, el.clientHeight - monitorBarHeight);
       if (!w || !h) return;
       const mobile = window.innerWidth <= 900, gap = 12;
       const cols = compareN && !mobile ? 2 : 1;
       const bw = (w - gap * (cols - 1)) / cols;
       const pw = Math.min(bw, mobile ? Infinity : h * ratio);
       const nw = Math.floor(pw), nh = Math.floor(pw / ratio);
-      setFit((f) => (f && f.w === nw && f.h === nh ? f : { w: nw, h: nh }));
+      setFit((f) => (f && f.w === nw && f.h === nh && f.availableW === bw ? f : { w: nw, h: nh, availableW: bw }));
     };
     calc();
     const ro = new ResizeObserver(calc);
     ro.observe(el);
     window.addEventListener('resize', calc);
     return () => { ro.disconnect(); window.removeEventListener('resize', calc); };
-  }, [compareN, ratio]);
+  }, [compareN, ratio, monitorBarHeight]);
 
   // --- déplacement à l'image près : on vise le milieu de l'image pour éviter les erreurs d'arrondi ---
   const scrub = useRef({ last: 0, pending: null, timer: null });
@@ -374,7 +391,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
   }, [seekF]);
   const flushScrub = useCallback(() => { const p = scrub.current.pending; if (p != null) seekF(p); }, [seekF]);
   useEffect(() => () => clearTimeout(scrub.current.timer), []);
-  const stepF = useCallback((d) => seekF((scrub.current.pending ?? Math.floor(vid.current.currentTime * Ff.current + 1e-4)) + d), [seekF]);
+  const stepF = useCallback((d) => { if (vid.current) seekF((scrub.current.pending ?? Math.floor(vid.current.currentTime * Ff.current + 1e-4)) + d); }, [seekF]);
   // flèches : pas selon le mode choisi, Maj = l'autre mode le temps d'un appui
   const stepBy = useCallback((dir, invert = false, held = false) => {
     const perFrame = (stepRef.current === 'frame') !== invert;
@@ -457,6 +474,26 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
 
   // vue de la timeline : tout visible au départ, zoomable
   useEffect(() => { if (dur > 0) setView({ s: 0, span: dur }); }, [dur]);
+  useEffect(() => {
+    if (!dur || probing || restored.current) return;
+    const frame = requestAnimationFrame(() => {
+      restored.current = true;
+      if (new URLSearchParams(location.search).has('c')) return;
+      if (Number.isFinite(remembered?.t)) seekF(Math.floor(clamp(remembered.t, 0, Math.max(0, dur - 1 / F)) * F + 1e-4));
+      if (Number.isFinite(remembered?.view?.span) && remembered.view.span > 0 && Number.isFinite(remembered?.view?.s)) {
+        const span = clamp(remembered.view.span, Math.min(dur, 12 / F), dur);
+        setView({ s: clamp(remembered.view.s, 0, dur - span), span });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [dur, probing, remembered, seekF, F]);
+  latestSession.current = { source: sourceIdentity, t: now, view, ready: dur > 0 && !probing };
+  useEffect(() => {
+    const save = () => { const value = latestSession.current; if (restored.current && value?.ready) writeSession(sessionKey, { source: value.source, t: value.t, view: value.view }); };
+    const timer = setInterval(save, 1000);
+    window.addEventListener('pagehide', save); document.addEventListener('visibilitychange', save);
+    return () => { save(); clearInterval(timer); window.removeEventListener('pagehide', save); document.removeEventListener('visibilitychange', save); };
+  }, [sessionKey]);
   const span = view.span || dur || 1;
   const vs = view.s;
   const xp = (t) => `${((t - vs) / span) * 100}%`;
@@ -692,7 +729,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
       else if (e.key === 'ArrowLeft') { e.preventDefault(); stepBy(-1, e.shiftKey, e.repeat); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); stepBy(1, e.shiftKey, e.repeat); }
       else if (e.key === 's' || e.key === 'S') { toggleStep(); }
-      else if (e.key === 'Escape') { setTool(null); }
+      else if (e.key === 'Escape') { setTool(null); setExpanded(false); }
     };
     // touche relâchée : la vidéo rejoint tout de suite la position affichée
     const onUpKey = (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') flushScrub(); };
@@ -724,47 +761,63 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
   const visible = tops.filter((c) => hasMarks(c) && atFrame(Math.round(c.t * F), c.t_end ? Math.round(c.t_end * F) : null));
   // le dessin en cours appartient à l'image du commentaire en préparation
   const draftHere = atFrame(stampF, endF);
+  const capture = async () => {
+    if (capturing || isYt) return;
+    setCapturing(true); setCaptureMessage('');
+    try {
+      flushScrub(); const video = vid.current; video.pause();
+      if (video.seeking) await new Promise((resolve, reject) => {
+        const finish = () => { clearTimeout(timer); video.removeEventListener('seeked', finish); resolve(); };
+        const timer = setTimeout(() => { video.removeEventListener('seeked', finish); reject(new Error('La frame n’est pas prête. Réessaie.')); }, 8000);
+        video.addEventListener('seeked', finish, { once: true });
+      });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const overlay = wrap.current?.querySelector('.ov svg')?.cloneNode(true);
+      const pins = [...(wrap.current?.querySelectorAll('.ov .pin') || [])].map((el) => ({ x: parseFloat(el.style.left) / 100, y: parseFloat(el.style.top) / 100, label: el.textContent, draft: el.classList.contains('draft') }));
+      const time = video.currentTime;
+      await captureAnnotatedFrame({ video, time, overlay, pins, filename: `${title.replace(/[^\p{L}\p{N}_-]+/gu, '-').slice(0, 80) || 'capture'}-v${currentN}-${tcFull(time).replaceAll(':', '-')}.png` });
+      setCaptureMessage('Image téléchargée.');
+    } catch (e) { setCaptureMessage(e.message || 'La capture a échoué.'); } finally { setCapturing(false); }
+  };
 
-  // --- timeline : clic / glisser = se déplacer ; appui long (0,35 s) puis glisser = sélectionner une zone ---
+  // Timeline : clic / glisser = déplacement ; Maj + clic-glisser = plage de commentaire.
   const [selecting, setSelecting] = useState(false);
   const press = useRef(null);
-  const noteRef = useRef(null);
   const onTrackDown = (e) => {
     if (e.button !== 0) return;
+    e.preventDefault();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
-    const f = Math.floor(timeAt(e) * F);
+    const f = clamp(Math.floor(timeAt(e) * F), 0, Math.max(0, Math.ceil(dur * F) - 1));
     scrubTo(f, true);
-    const p = { startF: f, x0: e.clientX, selecting: false };
-    p.timer = setTimeout(() => {
-      p.selecting = true;
+    const p = { startF: e.shiftKey ? curF : f, pressedF: f, currentF: f, x0: e.clientX, selecting: e.shiftKey };
+    if (p.selecting) {
       vid.current?.pause();
-      setSel(null); setStampF(p.startF); setEndF(null); setSelecting(true);
-    }, 350);
+      setSel(null); setStampF(Math.min(p.startF, f)); setEndF(p.startF === f ? null : Math.max(p.startF, f)); setSelecting(true);
+    }
     press.current = p;
   };
   const onTrackMove = (e) => {
     setHover({ x: e.clientX - e.currentTarget.getBoundingClientRect().left, t: timeAt(e) });
     const p = press.current;
     if (!p || e.buttons !== 1) return;
-    const f = Math.max(0, Math.floor(timeAt(e) * F));
+    const f = clamp(Math.floor(timeAt(e) * F), 0, Math.max(0, Math.ceil(dur * F) - 1));
+    p.currentF = f;
     if (p.selecting) {
+      if (Math.abs(e.clientX - p.x0) > 4) p.startF = p.pressedF;
       // la zone va de l'appui jusqu'au pointeur, dans un sens ou dans l'autre
       setStampF(Math.min(p.startF, f)); setEndF(f === p.startF ? null : Math.max(p.startF, f));
       return;
     }
-    if (Math.abs(e.clientX - p.x0) > 4) clearTimeout(p.timer); // ça bouge : c'est un déplacement, pas un appui long
     scrubTo(f);
   };
   const onTrackUp = () => {
     const p = press.current;
     press.current = null;
     if (!p) return;
-    clearTimeout(p.timer);
     if (!p.selecting) { flushScrub(); return; }
     setSelecting(false);
-    seekF(Math.min(p.startF, stampF)); // la tête se cale au début de la zone
-    setToolsOpen(true);               // prêt à dessiner sur la zone…
-    setTimeout(() => noteRef.current?.focus(), 0); // …et à écrire la note
+    seekF(Math.min(p.startF, p.currentF)); // la tête se cale au début de la zone
+    setToolsOpen(true); // Le commentaire et les dessins utilisent désormais cette plage.
   };
 
   const askName = !nameOk || editName;
@@ -773,13 +826,13 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
   const flatPeaks = useMemo(() => ({ l: new Uint8Array(400).fill(16), r: null }), []); // onde plate de remplacement
 
   return (
-    <div className="review">
+    <div className={`review ${expanded ? 'review-expanded' : ''}`}>
       <div className="stage">
         <header className="topbar">
           <div>
-            {back
+            <div className="review-context">{back
               ? <Link className="eyebrow back" to={back.to}>← {back.label}</Link>
-              : <div className="eyebrow">Review{isYt ? ' · YouTube' : ''}</div>}
+              : <div className="eyebrow">Review{isYt ? ' · YouTube' : ''}</div>}{deadline}</div>
             <h1 className="title">{title}</h1>
             {admin && (
               <div className="status-line">
@@ -790,6 +843,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
             )}
           </div>
           <div className="row">
+            <button className="ghost sm" aria-pressed={expanded} onClick={() => setExpanded((value) => !value)} title={expanded ? 'Revenir à la vue avec commentaires · Échap' : 'Agrandir le lecteur et masquer les commentaires'}>{expanded ? 'Réduire' : 'Agrandir'}</button>
             {cmpable.length > 0 && <button className={compareN ? 'ghost on' : 'ghost'} onClick={toggleCompare} title="Voir deux versions côte à côte, lecture synchronisée">Comparer</button>}
             {versions.length > 1 && (
               <div className="seg-ctl" role="group" aria-label="Version">
@@ -821,12 +875,12 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
                 ? <><span className={`state ${approval.status}`}>{mine
                     ? (approval.status === 'approved' ? 'Tu as validé cette version' : 'Tu as demandé des modifications')
                     : `${approval.by} ${approval.status === 'approved' ? 'a validé cette version' : 'a demandé des modifications'}`}</span><span className="mut"> · {fmtDay(approval.at)}</span></>
-                : <span>Cette version te convient ? <span className="mut">Une fois tes commentaires laissés, donne ton avis.</span></span>}
+                : <span><strong>Ton avis sur la v{currentN}</strong><span className="mut"> · Il s’applique à cette version.</span></span>}
             </div>
             <div className="row">
               {approval && <button className="link" onClick={() => setReview(null)}>{mine ? 'Changer d’avis' : 'Retirer l’avis'}</button>}
-              <button className={approval?.status === 'changes' ? 'ghost sm on' : 'ghost sm'} onClick={() => setReview('changes')}>Demander des modifications</button>
-              <button className={approval?.status === 'approved' ? 'ok sm' : 'sm'} onClick={() => setReview('approved')}>{approval?.status === 'approved' ? '✓ Validée' : 'Valider cette version'}</button>
+              <button className={approval?.status === 'changes' ? 'ghost sm on' : 'ghost sm'} onClick={() => setReview('changes')}>Demander des changements</button>
+              <button className={approval?.status === 'approved' ? 'ok sm' : 'sm'} onClick={() => setReview('approved')}>{approval?.status === 'approved' ? '✓ Approuvée' : 'Approuver'}</button>
             </div>
           </div>
         ); })()}
@@ -849,8 +903,8 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
           </div>
         )}
 
-        <div className={`vstage ${compareN ? 'two' : ''}`} ref={vstage}>
-        <div className="vwrap" ref={wrap} style={fit ? { width: fit.w, height: fit.h } : undefined}>
+        <div className={`vstage ${compareN ? 'two' : ''}`} ref={vstage} style={{ '--monitor-toolbar-h': `${monitorBarHeight}px` }}>
+        <VideoMonitor aid={aid} viewportRef={wrap} fit={fit} nativeSize={nativeSize} box={box} playing={playing} onPlay={playPause} onStep={stepF} toolsOpen={toolsOpen} onTools={toggleTools} drawingTools={<DrawingToolbar tool={tool} onTool={pickTool} color={color} onColor={setColor} canUndo={!!shapes.length || !!pin} onUndo={() => shapes.length ? setShapes((items) => items.slice(0, -1)) : setPin(null)} />} onToolbarHeight={setMonitorBarHeight} sessionKey={sessionKey} sourceIdentity={sourceIdentity} ready={dur > 0} onCapture={capture} captureDisabled={isYt || source === 'drive'} capturing={capturing}>
           {compareN && <span className="pane-tag">v{currentN}</span>}
           {isYt ? (
             <>
@@ -906,7 +960,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
             ))}
  {pin && draftHere && <div className="pin draft" style={{ left: `${pin[0] * 100}%`, top: `${pin[1] * 100}%` }}><b>+</b></div>}
           </div>
-        </div>
+        </VideoMonitor>
         {compareN && other && (
           <div className="vwrap" ref={slaveWrap} style={fit ? { width: fit.w, height: fit.h } : undefined}>
             <span className="pane-tag">v{compareN}</span>
@@ -922,70 +976,54 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
         )}
         </div>
 
+        {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
         <div className={`track ${pro ? 'pro' : ''} ${selecting ? 'selecting' : ''}`} ref={track}
           onPointerDown={onTrackDown} onPointerMove={onTrackMove} onPointerUp={onTrackUp} onPointerCancel={onTrackUp}
           onPointerLeave={() => setHover(null)}>
-          {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} top={pro ? 16 : 0} variant={waveStyle} tint={waveTint} low={waveLow} />}
+          {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
           {pro && ticks.out.map((t) => (
             <div key={t} className="tick" style={{ left: xp(t) }}><span>{tickLabel(t)}</span></div>
           ))}
           {dur > 0 && tops.map((c) => c.t_end
             ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
-                onPointerDown={(e) => { e.stopPropagation(); setSel(c.id); seekT(c.t); }} />
+                onPointerDown={(e) => { if (e.shiftKey) return; e.stopPropagation(); setSel(c.id); seekT(c.t); }} />
             : <div key={c.id} className={`mk ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t) }} title={`${label(c.t)} — ${c.author}`}
-                onPointerDown={(e) => { e.stopPropagation(); setSel(c.id); seekT(c.t); }} />)}
+                onPointerDown={(e) => { if (e.shiftKey) return; e.stopPropagation(); setSel(c.id); seekT(c.t); }} />)}
           {dur > 0 && endF != null && <div className="selzone" style={{ left: xp(stampF / F), width: `${(((endF - stampF) / F) / span) * 100}%` }} />}
           <div className="head" style={{ left: xp(now) }} />
           {hover && <div className="hov" style={{ left: hover.x }}><span>{label(hover.t)}</span></div>}
         </div>
 
         <div className="transport">
-          <button className="play" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}>{playing ? <IconPause /> : <IconPlay />}</button>
-          {pro && <button className="ghost icon" title="Reculer (←)" aria-label="Reculer" onClick={() => stepBy(-1)}><IconChevron dir="left" /></button>}
-          {pro && <button className="ghost icon" title="Avancer (→)" aria-label="Avancer" onClick={() => stepBy(1)}><IconChevron dir="right" /></button>}
           <div className="timecode"><span className="cur">{label(now)}</span><span className="tot">/ {label(dur || 0)}</span></div>
           <div className="spacer" />
           {pro && <span className="meta">{F} images/s</span>}
-          <button className={toolsOpen ? 'ghost on' : 'ghost'} onClick={toggleTools}>Dessiner</button>
         </div>
 
-        {toolsOpen && (
-          <div className="tools">
-            <div className="seg-ctl">
-              {TOOLS.map(([k, l]) => <button key={k} className={tool === k ? 'on' : ''} onClick={() => pickTool(k)}>{l}</button>)}
-            </div>
-            <span className="sw">
-              {COLORS.map((c) => <i key={c} className={c === color ? 'on' : ''} style={{ background: c }} onClick={() => setColor(c)} />)}
-            </span>
-            <button className="ghost sm" disabled={!shapes.length && !pin} onClick={() => (shapes.length ? setShapes((s) => s.slice(0, -1)) : setPin(null))}>Annuler</button>
-          </div>
-        )}
-
         {pro && (
-          <div className="dock">
+          <div className="dock pro-controls">
+            <div className="pro-navigation">
             <div className="dock-group">
-              <label>Pas des flèches</label>
+              <label>Déplacement ← →</label>
               <div className="seg-ctl sm">
                 <button className={stepMode === 'frame' ? 'on' : ''} onClick={() => setStepTo('frame')}>1 image</button>
                 <button className={stepMode === 'second' ? 'on' : ''} onClick={() => setStepTo('second')}>1 seconde</button>
               </div>
             </div>
             <div className="dock-group">
-              <label>Zoom</label>
+              <label>Zoom timeline</label>
               <div className="seg-ctl sm">
                 <button onClick={() => zoomBy(1.6)} aria-label="Dézoomer">−</button>
                 <button onClick={() => zoomBy(1 / 1.6)} aria-label="Zoomer">+</button>
                 <button onClick={() => setView({ s: 0, span: dur })}>Tout</button>
               </div>
             </div>
-            <div className="dock-group">
-              <label>Raccourcis</label>
-              <span className="mut" style={{ fontSize: 12, lineHeight: '24px' }}>← → pas · Maj + flèche : l’autre pas · S : changer · molette : zoom · appui long : zone</span>
             </div>
-            {peaks && (
-              <>
+            <details className="pro-settings">
+              <summary>Onde sonore</summary>
+              <div className="pro-wave-options">
                 <div className="dock-group">
-                  <label>Type d’onde</label>
+                  <label>Style</label>
                   <div className="seg-ctl sm">
                     {WAVE_STYLES.map(([k, l]) => <button key={k} className={waveStyle === k ? 'on' : ''} onClick={() => savePref('review-wave', k, setWaveStyle)}>{l}</button>)}
                   </div>
@@ -1000,12 +1038,23 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
                 <div className="dock-group">
                   <label>Teinte</label>
                   <div className="seg-ctl sm">
-                    <button className={waveTint === 'vol' ? 'on' : ''} onClick={() => savePref('review-wavetint', 'vol', setWaveTint)}>Selon le volume</button>
+                    <button className={waveTint === 'vol' ? 'on' : ''} onClick={() => savePref('review-wavetint', 'vol', setWaveTint)}>Volume</button>
                     <button className={waveTint === 'flat' ? 'on' : ''} onClick={() => savePref('review-wavetint', 'flat', setWaveTint)}>Unie</button>
                   </div>
                 </div>
-              </>
-            )}
+              </div>
+            </details>
+            <details className="pro-settings pro-shortcuts">
+              <summary>Raccourcis</summary>
+              <dl>
+                <div><dt>Maj + clic</dt><dd>Étendre depuis la tête</dd></div>
+                <div><dt>Maj + glisser</dt><dd>Sélectionner une zone</dd></div>
+                <div><dt>Maj + ← / →</dt><dd>Changer de pas</dd></div>
+                <div><dt>Molette</dt><dd>Zoomer</dd></div>
+                <div><dt>Espace</dt><dd>Lecture / pause</dd></div>
+                <div><dt>Alt + ↑ / ↓</dt><dd>Parcourir les commentaires</dd></div>
+              </dl>
+            </details>
           </div>
         )}
 
@@ -1036,7 +1085,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
       <aside className="side">
         <div className="side-head">
           <h2>Commentaires</h2>
-          <span className="count">{tops.length}</span>
+          <CommentNavigation comments={shown} currentId={sel} position={curF / F} onSelect={(c) => { setSel(c.id); seekT(c.t); }} />
         </div>
         <div className="filters">
           <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -1060,7 +1109,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
 
         <div className="list">
           {shown.map((c) => (
-            <div key={c.id} className={`cm ${c.resolved ? 'done' : ''} ${sel === c.id ? 'sel' : ''}`}
+            <div key={c.id} data-comment-id={c.id} className={`cm ${c.resolved ? 'done' : ''} ${sel === c.id ? 'sel' : ''}`}
               onClick={() => { setSel(c.id); seekT(c.t); }}>
               <div className="cm-head">
                 <span>
@@ -1094,7 +1143,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
               </div>
             </div>
           ))}
-          {!shown.length && <p className="mut">{tops.length ? 'Rien dans ce filtre.' : 'Aucun commentaire pour l’instant. Écris le premier ci-dessous.'}</p>}
+          {!shown.length && <p className="mut">{tops.length ? 'Aucun résultat.' : 'Aucun commentaire.'}</p>}
         </div>
 
         <div className="compose">
@@ -1114,7 +1163,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
           {!pro && endF != null && (
             <div className="zone-line mut">Zone {draftLabel} · <button className="link" style={{ padding: 0 }} onClick={() => setEndF(null)}>retirer la zone</button></div>
           )}
-          <textarea ref={noteRef} rows={3} placeholder={endF != null ? `Ta note sur ${draftLabel}…` : `Ton commentaire à ${draftLabel}…`} value={body}
+          <textarea rows={3} placeholder={endF != null ? `Ta note sur ${draftLabel}…` : `Ton commentaire à ${draftLabel}…`} value={body}
             onFocus={beginCompose} onChange={(e) => setBody(e.target.value)}
             onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send(); }} />
           <div className="row" style={{ justifyContent: 'space-between' }}>

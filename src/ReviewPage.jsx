@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from './AuthContext';
-import { loadProject, loadReview } from './data';
+import { loadProject, loadReview, setProjectDeadline, subscribeProject } from './data';
+import ProjectDeadline, { DeadlineBadge } from './ProjectDeadline';
 import Review from './Review';
 import StillReview from './StillReview';
 import Notice from './Notice';
 
 export default function ReviewPage() {
   const { token } = useParams();
+  const route = useLocation();
   const [sp] = useSearchParams();
   const { user, ready, signIn, signOut } = useAuth();
   const [state, setState] = useState({ status: 'loading' });
@@ -28,6 +30,11 @@ export default function ReviewPage() {
       .catch((e) => { if (!dead) { loaded.current = false; setState({ status: e.code === 'not-found' ? 'missing' : 'denied' }); } });
     return () => { dead = true; };
   }, [token, ready, user?.uid, v]);
+  const projectId = state.project?.id;
+  useEffect(() => {
+    if (!projectId) return;
+    return subscribeProject(projectId, (project) => setState((s) => s.status === 'ok' ? { ...s, project } : s), () => setState((s) => ({ ...s, project: null })));
+  }, [projectId]);
 
   if (state.status === 'loading') return <Notice title="Chargement…" />;
   if (state.status === 'missing') return <Notice title="Review introuvable" text="Ce lien ne correspond à aucune review." />;
@@ -48,7 +55,10 @@ export default function ReviewPage() {
 
   const { asset, versions, project } = state;
   const admin = !!user && asset.owner === user.uid;
-  const back = project ? { to: `/p/${project.id}`, label: project.name } : admin ? { to: '/', label: 'Vos reviews' } : null;
+  const deadline = project ? <div className="review-deadline">{user?.uid === project.owner
+    ? <ProjectDeadline value={project.dueDate} onSave={(date) => setProjectDeadline(project.id, date)} />
+    : project.dueDate ? <DeadlineBadge value={project.dueDate} label /> : <span className="mut">Échéance · non définie</span>}</div> : null;
+  const back = project && (admin || route.state?.fromProject === project.id) ? { to: `/p/${project.id}`, label: project.name } : admin ? { to: '/', label: 'Vos reviews' } : null;
   const latest = versions[versions.length - 1];
   const current = versions.find((x) => String(x.n) === v) || latest;
   const cmp = versions.find((x) => String(x.n) === sp.get('cmp') && x.n !== current.n)?.n ?? null;
@@ -60,6 +70,7 @@ export default function ReviewPage() {
         title={asset.title}
         admin={admin}
         back={back}
+        deadline={deadline}
         version={current}
         versions={versions.map((x) => ({ n: x.n, status: x.status }))}
         currentN={current.n}
@@ -75,6 +86,7 @@ export default function ReviewPage() {
       title={asset.title}
       admin={admin}
       back={back}
+      deadline={deadline}
       initialFps={current.fps}
       initialPeaks={current.peaks}
       source={current.source}

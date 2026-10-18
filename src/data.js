@@ -5,6 +5,7 @@ import {
   setDoc, Timestamp, updateDoc, where, writeBatch,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { validDeadline } from './deadlines';
 
 const DAY = 86_400_000;
 const ms = (v) => (v?.toMillis ? v.toMillis() : v ?? null);
@@ -138,19 +139,25 @@ export async function loadProject(pid) {
   if (!snap.exists()) { const e = new Error('not-found'); e.code = 'not-found'; throw e; }
   return toProject(snap);
 }
+export const subscribeProject = (pid, onData, onError) => onSnapshot(doc(db, 'projects', pid), (snapshot) => onData(snapshot.exists() ? toProject(snapshot) : null), onError);
 export async function listProjects(uid) {
   const snap = await getDocs(query(collection(db, 'projects'), where('owner', '==', uid)));
-  return snap.docs.map(toProject).sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
+  return snap.docs.map(toProject).sort((a, b) => (a.dueDate || '9999-99-99').localeCompare(b.dueDate || '9999-99-99') || (b.created ?? 0) - (a.created ?? 0));
 }
-export async function createProject(uid, name) {
+export async function createProject(uid, name, dueDate = null) {
+  if (dueDate && !validDeadline(dueDate)) throw new Error('Date invalide.');
   const pid = newToken();
   await setDoc(doc(db, 'projects', pid), {
-    name: name.trim().slice(0, 120), owner: uid, created: serverTimestamp(),
+    name: name.trim().slice(0, 120), owner: uid, created: serverTimestamp(), dueDate: dueDate || null,
     expiresAt: Timestamp.fromMillis(Date.now() + 30 * DAY), revoked: false, access: 'link', invited: [],
   });
   return pid;
 }
 export const renameProject = (pid, name) => updateDoc(doc(db, 'projects', pid), { name: name.trim().slice(0, 120) });
+export const setProjectDeadline = (pid, dueDate) => {
+  if (dueDate && !validDeadline(dueDate)) throw new Error('Date invalide.');
+  return updateDoc(doc(db, 'projects', pid), { dueDate: dueDate || null });
+};
 // les reviews du projet ne sont pas supprimées : elles repassent dans « Sans projet »
 export async function deleteProject(pid, uid) {
   const snap = await getDocs(query(collection(db, 'assets'), where('owner', '==', uid), where('project', '==', pid)));

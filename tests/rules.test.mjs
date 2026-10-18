@@ -108,6 +108,7 @@ await check('un invité ne crée pas de version', assertFails(setDoc(doc(guestDb
 console.log('Projets');
 const project = (over = {}) => ({ name: 'Pub', owner: 'hostUid', created: serverTimestamp(), expiresAt: future, revoked: false, access: 'link', invited: [], ...over });
 await check('un hôte crée un projet', assertSucceeds(setDoc(doc(hostDb, 'projects/P1'), project())));
+await check('un hôte crée un projet avec échéance', assertSucceeds(setDoc(doc(hostDb, 'projects/PDUE'), project({ dueDate: '2026-12-20' }))));
 await check('…pas au nom d\'un autre', assertFails(setDoc(doc(hostDb, 'projects/P2'), project({ owner: 'u2' }))));
 await check('…pas sans être hôte', assertFails(setDoc(doc(otherHostDb, 'projects/P3'), project({ owner: 'u2' }))));
 await check('…pas sans nom', assertFails(setDoc(doc(hostDb, 'projects/P4'), project({ name: '' }))));
@@ -129,6 +130,14 @@ await check('l\'hôte sort une review de son projet', assertSucceeds(updateDoc(d
 await check('l\'hôte crée une review directement dans un projet', assertSucceeds(setDoc(doc(hostDb, 'assets/NEWP'), asset({ project: 'PRJ' }))));
 await check('l\'hôte liste les reviews d\'un projet désactivé (owner + project)', assertSucceeds(getDocs(query(collection(hostDb, 'assets'), where('owner', '==', 'hostUid'), where('project', '==', 'PREV')))));
 await check('un invité ne renomme pas un projet', assertFails(updateDoc(doc(guestDb, 'projects/PRJ'), { name: 'x' })));
+await check('l’hôte ajoute une échéance', assertSucceeds(updateDoc(doc(hostDb, 'projects/PRJ'), { dueDate: '2026-12-20' })));
+await check('l’hôte change l’échéance', assertSucceeds(updateDoc(doc(hostDb, 'projects/PRJ'), { dueDate: '2026-12-24' })));
+await check('un invité ne change pas l’échéance', assertFails(updateDoc(doc(guestDb, 'projects/PRJ'), { dueDate: '2026-12-25' })));
+await check('un autre hôte ne change pas l’échéance', assertFails(updateDoc(doc(user('differentHostUid', 'host@x.test'), 'projects/PRJ'), { dueDate: '2026-12-25' })));
+await check('échéance numérique refusée', assertFails(updateDoc(doc(hostDb, 'projects/PRJ'), { dueDate: 123 })));
+await check('échéance au mauvais format refusée', assertFails(updateDoc(doc(hostDb, 'projects/PRJ'), { dueDate: 'demain' })));
+await check('mois hors limites refusé', assertFails(updateDoc(doc(hostDb, 'projects/PRJ'), { dueDate: '2026-13-01' })));
+await check('l’hôte retire l’échéance', assertSucceeds(updateDoc(doc(hostDb, 'projects/PRJ'), { dueDate: null })));
 await check('un invité ne déplace pas une review', assertFails(updateDoc(doc(guestDb, 'assets/INPRJ'), { project: null })));
 await check('l\'hôte renomme et désactive son projet', assertSucceeds(updateDoc(doc(hostDb, 'projects/P1'), { name: 'Pub 2', revoked: true })));
 await check('l\'hôte supprime son projet', assertSucceeds(deleteDoc(doc(hostDb, 'projects/P1'))));

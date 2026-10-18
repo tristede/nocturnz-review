@@ -1,6 +1,7 @@
 // Éléments communs au tableau de bord et aux pages projet : cartes de review, partage, ajout d'un lien.
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { createPortal } from 'react-dom';
 import * as data from './data';
 import { ACCEPTED, APP_ICONS } from './appIcons';
 import { KIND_LABEL, checkYouTube, driveMeta, kindOf, parseLink, thumbUrl } from './links';
@@ -34,7 +35,7 @@ export function StorageGauge() {
   const { hosting, used, ready, error } = useHosting();
   if (!ready) return null;
   if (!hosting) {
-    return <p className="mut gauge-line">Pour importer des fichiers depuis ton ordinateur, <Link to="/hebergement">branche ton hébergement</Link>.</p>;
+    return <p className="mut gauge-line">Stockage non connecté <Link to="/hebergement">Configurer</Link></p>;
   }
   if (error) return <p className="mut gauge-line warn">Hébergement injoignable : {error} <Link to="/hebergement">Réglages</Link></p>;
   const ratio = Math.min(1, (used || 0) / hosting.limitBytes);
@@ -141,6 +142,14 @@ export function Thumb({ v, className = 'thumb' }) {
 
 // partage d'une review (kind = 'assets') ou d'un projet entier (kind = 'projects')
 export function SharePanel({ item, kind = 'assets', run }) {
+  const dialog = useRef(null);
+  const [message, setMessage] = useState('');
+  const project = kind === 'projects';
+  const link = `${location.origin}/${project ? 'p' : 'r'}/${item.id}`;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(link); setMessage('Lien copié.'); }
+    catch { setMessage('Copie impossible. Sélectionne le lien ci-dessus.'); }
+  };
   const save = (e) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -153,10 +162,17 @@ export function SharePanel({ item, kind = 'assets', run }) {
     }, kind));
   };
   return (
-    <details className="adv">
-      <summary>Partage</summary>
-      <div className="pop col">
-        {kind === 'projects' && <span className="mut">Ce lien ouvre toutes les reviews du projet.</span>}
+    <>
+      <button className="ghost sm" onClick={() => { setMessage(''); dialog.current.showModal(); }}>
+        {project ? 'Partager le projet' : 'Partager ce fichier'}
+      </button>
+      {createPortal(<dialog ref={dialog} aria-label={project ? 'Partager le projet' : 'Partager ce fichier'} className="share-dialog" onClick={(e) => { if (e.target === e.currentTarget) e.currentTarget.close(); }}>
+      <div className="share-content">
+        <div className="share-heading"><h2>{project ? 'Partager le projet' : 'Partager ce fichier'}</h2><button className="ghost sm" aria-label="Fermer le partage" onClick={() => dialog.current.close()}>×</button></div>
+        <p className="mut share-name">{item.name || item.title}</p>
+        {project && <p className="mut">Toutes les reviews du projet.</p>}
+        <div className="share-link"><input aria-label={project ? 'Lien du projet' : 'Lien du fichier'} value={link} readOnly onFocus={(e) => e.currentTarget.select()} /><button onClick={copy}>Copier</button></div>
+        {message && <span className="mut" role="status">{message}</span>}
         <form onSubmit={save} className="col-form" key={`${item.access}-${item.invited.join()}`}>
           <label className="lbl">Accès</label>
           <label className="check"><input type="radio" name="access" value="link" defaultChecked={item.access === 'link'} /> Lien secret (sans compte)</label>
@@ -175,17 +191,18 @@ export function SharePanel({ item, kind = 'assets', run }) {
         </form>
         <button className="ghost sm" onClick={() => run(() => data.updateShare(item.id, { revoked: !item.revoked }, kind))}>{item.revoked ? 'Réactiver le lien' : 'Désactiver le lien'}</button>
       </div>
-    </details>
+      </dialog>, document.body)}
+    </>
   );
 }
 
 // ligne « lien secret · expire le … · https://… · copier »
 export function LinkLine({ item, path, setMsg }) {
   const link = `${location.origin}${path}`;
-  const copy = () => { try { navigator.clipboard.writeText(link); setMsg('Lien copié.'); } catch {} };
+  const copy = async () => { try { await navigator.clipboard.writeText(link); setMsg('Lien copié.'); } catch { setMsg('Copie impossible. Ouvre le partage pour sélectionner le lien.'); } };
   return (
     <div className="mut linkline">
-      {shareLine(item)} · <button className="link" style={{ padding: 0 }} onClick={copy} title={link}>Copier le lien</button>
+      {item.revoked && <span>Lien désactivé · </span>}<button className="link" style={{ padding: 0 }} onClick={copy} title={link}>Copier le lien</button>
     </div>
   );
 }
@@ -283,9 +300,8 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
       onDragLeave={(e) => { if (isFiles(e) && !e.currentTarget.contains(e.relatedTarget)) setOver(false); }}
       onDrop={(e) => { if (!isFiles(e)) return; e.preventDefault(); setOver(false); importOne(e.dataTransfer.files[0]); }}>
       <form onSubmit={add} style={{ display: 'grid', gap: 8 }}>
-        <input name="title" placeholder="Titre (facultatif : sinon le nom du fichier)" value={title} onChange={(e) => setTitle(e.target.value)} />
         <div className="row">
-          <input name="link" placeholder="Colle un lien YouTube ou Google Drive" value={link} onChange={(e) => setLink(e.target.value)} required={!!link} />
+          <input name="link" placeholder="Lien YouTube ou document Drive" value={link} onChange={(e) => setLink(e.target.value)} required={!!link} />
           {projects?.length > 0 && (
             <select name="project" value={proj} onChange={(e) => setProj(e.target.value)} title="Ranger dans un projet">
               <option value="">Sans projet</option>
@@ -298,6 +314,10 @@ export function AddAssetForm({ uid, project = null, projects = null, onDone }) {
           <input ref={fileInput} type="file" hidden accept="video/*,image/*,.svg,.pdf,.docx,.psd,.psb"
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; importOne(f); }} />
         </div>
+        <details className="optional-title">
+          <summary>Nom personnalisé</summary>
+          <input name="title" placeholder="Nom de la review" value={title} onChange={(e) => setTitle(e.target.value)} />
+        </details>
         {job ? <ImportProgress job={job} onCancel={cancel} /> : <Accepted link={link} />}
       </form>
       {over && <div className="drop-hint">Dépose le fichier pour l’importer</div>}
@@ -420,13 +440,13 @@ export function AssetCard({ a, projects = [], onChange, onDragging }) {
           {msg && <div className="mut" style={{ marginTop: 6 }}>{msg}</div>}
         </div>
 
-        <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <div className="row asset-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <SharePanel item={a} run={run} />
 
           <details className="adv">
             <summary>Nouvelle version</summary>
             <div className="pop col">
-              <span className="mut">Ajoute la v{latest.n + 1} (vidéo, image ou document) : le lien de partage reste le même.</span>
+              <span className="mut">Version {latest.n + 1}</span>
               {hosting && (
                 <label className="file-pick">
                   <span className="sm-btn">Importer un fichier</span>
@@ -472,7 +492,7 @@ export function AssetTile({ a }) {
   const latest = latestOf(a);
   const open = openCount(a);
   return (
-    <Link to={`/r/${a.id}`} className="tile">
+    <Link to={`/r/${a.id}`} state={{ fromProject: a.project }} className="tile">
       <Thumb v={latest} />
       <div className="tile-body">
         <span className="vtitle">{a.title}</span>

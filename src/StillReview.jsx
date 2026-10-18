@@ -3,10 +3,12 @@
 // appartiennent à une page (champ t = numéro de page, à partir de 0).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import CommentNavigation from './CommentNavigation';
+import DrawingToolbar from './DrawingToolbar';
 import * as data from './data';
 import { KIND_LABEL } from './links';
 import { openStill } from './stills';
-import { COLORS, TOOLS, clamp, parse, hasMarks, Shape, toShape, IconChevron } from './draw';
+import { COLORS, clamp, parse, hasMarks, Shape, toShape, IconChevron } from './draw';
 
 const ZOOMS = [1, 1.5, 2, 3, 4];
 
@@ -22,7 +24,7 @@ function PageContent({ pg, scale }) {
   return <div className="docpage" ref={holder} style={{ width: pg.w, height: pg.h, transform: `scale(${scale})` }} />;
 }
 
-export default function StillReview({ aid, title, admin, back = null, version, versions = [], currentN = 1, latestN = 1, initialStatus = null }) {
+export default function StillReview({ aid, title, admin, back = null, deadline = null, version, versions = [], currentN = 1, latestN = 1, initialStatus = null }) {
   const navigate = useNavigate();
   const [approval, setApproval] = useState(initialStatus);
   const [needName, setNeedName] = useState(false);
@@ -205,9 +207,9 @@ export default function StillReview({ aid, title, admin, back = null, version, v
       <div className="stage">
         <header className="topbar">
           <div>
-            {back
+            <div className="review-context">{back
               ? <Link className="eyebrow back" to={back.to}>← {back.label}</Link>
-              : <div className="eyebrow">Review · {kindLabel}</div>}
+              : <div className="eyebrow">Review · {kindLabel}</div>}{deadline}</div>
             <h1 className="title">{title}</h1>
             {admin && (
               <div className="status-line">
@@ -247,12 +249,12 @@ export default function StillReview({ aid, title, admin, back = null, version, v
                 ? <><span className={`state ${approval.status}`}>{mine
                     ? (approval.status === 'approved' ? 'Tu as validé cette version' : 'Tu as demandé des modifications')
                     : `${approval.by} ${approval.status === 'approved' ? 'a validé cette version' : 'a demandé des modifications'}`}</span><span className="mut"> · {fmtDay(approval.at)}</span></>
-                : <span>Cette version te convient ? <span className="mut">Une fois tes commentaires laissés, donne ton avis.</span></span>}
+                : <span><strong>Ton avis sur la v{currentN}</strong><span className="mut"> · Il s’applique à cette version.</span></span>}
             </div>
             <div className="row">
               {approval && <button className="link" onClick={() => setReview(null)}>{mine ? 'Changer d’avis' : 'Retirer l’avis'}</button>}
-              <button className={approval?.status === 'changes' ? 'ghost sm on' : 'ghost sm'} onClick={() => setReview('changes')}>Demander des modifications</button>
-              <button className={approval?.status === 'approved' ? 'ok sm' : 'sm'} onClick={() => setReview('approved')}>{approval?.status === 'approved' ? '✓ Validée' : 'Valider cette version'}</button>
+              <button className={approval?.status === 'changes' ? 'ghost sm on' : 'ghost sm'} onClick={() => setReview('changes')}>Demander des changements</button>
+              <button className={approval?.status === 'approved' ? 'ok sm' : 'sm'} onClick={() => setReview('approved')}>{approval?.status === 'approved' ? '✓ Approuvée' : 'Approuver'}</button>
             </div>
           </div>
         ); })()}
@@ -281,6 +283,8 @@ export default function StillReview({ aid, title, admin, back = null, version, v
           )}
         </div>
 
+        <div className="still-drawing-anchor">{toolsOpen && <div className="still-draw-popover"><DrawingToolbar tool={tool} onTool={(next) => setTool((prev) => prev === next ? null : next)} color={color} onColor={setColor} canUndo={!!shapes.length || !!pin} onUndo={() => shapes.length ? setShapes((items) => items.slice(0, -1)) : setPin(null)} /></div>}</div>
+
         <div className="transport">
           {count > 1 && (
             <>
@@ -298,18 +302,6 @@ export default function StillReview({ aid, title, admin, back = null, version, v
           <button className={toolsOpen ? 'ghost on' : 'ghost'} onClick={() => setToolsOpen((o) => { if (o) setTool(null); return !o; })}>Dessiner</button>
         </div>
 
-        {toolsOpen && (
-          <div className="tools">
-            <div className="seg-ctl">
-              {TOOLS.map(([k, l]) => <button key={k} className={tool === k ? 'on' : ''} onClick={() => setTool((cur) => (cur === k ? null : k))}>{l}</button>)}
-            </div>
-            <span className="sw">
-              {COLORS.map((c) => <i key={c} className={c === color ? 'on' : ''} style={{ background: c }} onClick={() => setColor(c)} />)}
-            </span>
-            <button className="ghost sm" disabled={!shapes.length && !pin} onClick={() => (shapes.length ? setShapes((s) => s.slice(0, -1)) : setPin(null))}>Annuler</button>
-          </div>
-        )}
-
         {count > 1 && count <= 60 && (
           <div className="pages">
             {Array.from({ length: count }, (_, i) => (
@@ -324,7 +316,7 @@ export default function StillReview({ aid, title, admin, back = null, version, v
       <aside className="side">
         <div className="side-head">
           <h2>Commentaires</h2>
-          <span className="count">{tops.length}</span>
+          <CommentNavigation comments={shown} currentId={sel} position={page} onSelect={(c) => { setSel(c.id); go(Math.round(c.t)); }} />
         </div>
         <div className="filters">
           <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -347,7 +339,7 @@ export default function StillReview({ aid, title, admin, back = null, version, v
 
         <div className="list">
           {shown.map((c) => (
-            <div key={c.id} className={`cm ${c.resolved ? 'done' : ''} ${sel === c.id ? 'sel' : ''}`}
+            <div key={c.id} data-comment-id={c.id} className={`cm ${c.resolved ? 'done' : ''} ${sel === c.id ? 'sel' : ''}`}
               onClick={() => { setSel(c.id); go(Math.round(c.t)); }}>
               <div className="cm-head">
                 <span>
@@ -381,7 +373,7 @@ export default function StillReview({ aid, title, admin, back = null, version, v
               </div>
             </div>
           ))}
-          {!shown.length && <p className="mut">{tops.length ? 'Rien dans ce filtre.' : 'Aucun commentaire pour l’instant. Écris le premier ci-dessous.'}</p>}
+          {!shown.length && <p className="mut">{tops.length ? 'Aucun résultat.' : 'Aucun commentaire.'}</p>}
         </div>
 
         <div className="compose">

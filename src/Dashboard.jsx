@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from './AuthContext';
+import { usingEmulators } from './firebase';
 import * as data from './data';
 import { AddAssetForm, AssetCard, DropBar, DropZone, ExpiredCleanup, HostingProvider, StorageGauge, Thumb, latestOf, openCount } from './library';
 import Notice from './Notice';
+import ProjectDeadline from './ProjectDeadline';
 
 // menu « ⋯ » d'une tuile de projet : tout gérer sans ouvrir le projet
 function ProjectMenu({ p, uid, onChange }) {
@@ -83,6 +85,7 @@ function ProjectTile({ p, assets, uid, onDropAsset, onChange }) {
           </span>
         </div>
       </Link>
+      <div className="tile-deadline"><ProjectDeadline value={p.dueDate} onSave={async (date) => { await data.setProjectDeadline(p.id, date); await onChange(); }} /></div>
       <ProjectMenu p={p} uid={uid} onChange={onChange} />
     </DropZone>
   );
@@ -96,11 +99,13 @@ function NewProject({ uid, onDone }) {
     e.preventDefault();
     const name = String(new FormData(e.currentTarget).get('name')).trim();
     if (!name) return;
-    try { await data.createProject(uid, name); setOpen(false); await onDone(); } catch (ex) { setErr(ex.message); }
+    const dueDate = String(new FormData(e.currentTarget).get('dueDate') || '') || null;
+    try { await data.createProject(uid, name, dueDate); setOpen(false); await onDone(); } catch (ex) { setErr(ex.message); }
   };
   return (
     <form className="tile new-form" onSubmit={create}>
       <input name="name" placeholder="Nom du projet" autoFocus maxLength={120} />
+      <label className="project-create-deadline">Échéance<input type="date" name="dueDate" aria-label="Échéance du projet (facultative)" max="9999-12-31" /></label>
       <div className="row">
         <button className="sm">Créer</button>
         <button type="button" className="ghost sm" onClick={() => setOpen(false)}>Annuler</button>
@@ -130,10 +135,11 @@ export default function Dashboard() {
   if (!ready) return <Notice title="Chargement…" />;
   if (!user) {
     return (
-      <Notice title="Review" text="Outil privé de review vidéo. Il n’est pas ouvert au public : l’accès se donne au cas par cas, sur demande. Si on t’a envoyé un lien de review, ouvre directement ce lien.">
+      <Notice title="Review" text="Accès privé, sur demande.">
         <div className="row" style={{ flexWrap: 'wrap' }}>
           <a className="btn-link" href="https://nocturnz.xyz/review/">Demander un accès</a>
           <button className="ghost" onClick={() => signIn().catch((e) => setErr(e.message))}>J’ai déjà un accès</button>
+          {usingEmulators && <button className="ghost" onClick={() => window.__devSignIn('host@example.test').catch((e) => setErr(e.message))}>Entrer en aperçu local</button>}
         </div>
         {err && <p className="mut" style={{ marginTop: 14 }}>{err}</p>}
       </Notice>
@@ -141,7 +147,7 @@ export default function Dashboard() {
   }
   if (denied) {
     return (
-      <Notice title="Pas d’accès pour ce compte" text="Review n’est pas ouvert au public : les comptes qui créent des reviews sont ajoutés un par un, sur demande. Les clients n’ont pas besoin de passer par ici, ils utilisent le lien de review qu’on leur a envoyé.">
+      <Notice title="Accès refusé" text="Ce compte n’est pas autorisé à créer des reviews.">
         <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={signOut}>Changer de compte</button></p>
         <p style={{ marginTop: 14 }}><a className="btn-link" href="https://nocturnz.xyz/review/">Demander un accès</a></p>
       </Notice>
@@ -160,11 +166,11 @@ export default function Dashboard() {
   return (
     <HostingProvider uid={user.uid}>
     <div className="wrap">
-      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 30 }}>
-        <div className="brand" style={{ margin: 0 }}><i /> Review</div>
+      <div className="row dashbar" style={{ justifyContent: 'space-between' }}>
+        <div className="brand" style={{ margin: 0 }}><span>nocturnz</span><b>/ review</b></div>
         <div className="row"><span className="mut">{user.email}</span><button className="ghost sm" onClick={signOut}>Se déconnecter</button></div>
       </div>
-      <h1>Vos reviews</h1>
+      <div className="dash-title"><span className="eyebrow">Espace de travail</span><h1>Vos reviews<span>.</span></h1></div>
 
       <AddAssetForm uid={user.uid} projects={lib?.projects} onDone={reload} />
       <StorageGauge />
@@ -174,17 +180,16 @@ export default function Dashboard() {
       {!lib && <p className="mut">Chargement…</p>}
       {lib && (
         <>
-          <div className="eyebrow section-title">Projets</div>
+          <div className="section-title"><span>01</span><b>Projets</b></div>
           <div className="tiles">
             {lib.projects.map((p) => <ProjectTile key={p.id} p={p} assets={lib.assets.filter((a) => a.project === p.id)} uid={user.uid} onChange={reload} onDropAsset={(aid) => move(aid, p.id)} />)}
             <NewProject uid={user.uid} onDone={reload} />
           </div>
 
-          <div className="eyebrow section-title">Sans projet</div>
+          <div className="section-title"><span>02</span><b>Sans projet</b></div>
           {dragging && lib.projects.length > 0 && <DropBar targets={lib.projects} onDropAsset={move} />}
           {loose.map((a) => <AssetCard key={a.id} a={a} projects={lib.projects} onChange={reload} onDragging={setDragging} />)}
-          {loose.length > 0 && lib.projects.length > 0 && !dragging && <p className="mut hint">Astuce : glisse une review sur un projet pour l’y ranger.</p>}
-          {!loose.length && <p className="mut">{lib.assets.length ? 'Toutes tes reviews sont rangées dans des projets.' : 'Aucune review. Importe un fichier ou colle un lien ci-dessus.'}</p>}
+          {!loose.length && !lib.assets.length && <p className="mut empty-line">Aucune review</p>}
         </>
       )}
     </div>
