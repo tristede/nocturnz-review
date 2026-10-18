@@ -155,18 +155,17 @@ const MIcon = ({ d }) => <svg width="22" height="22" viewBox="0 0 24 24" fill="n
 const M_ICONS = {
   pen: <path d="m4 16 12-12 4 4L8 20H4zM13 7l4 4" />,
   pin: <><path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z" /><circle cx="12" cy="10" r="2.2" /></>,
-  zone: <><path d="M4 6v12M20 6v12" /><path d="M8 12h8m-8 0 2.5-2.5M8 12l2.5 2.5M16 12l-2.5-2.5M16 12l-2.5 2.5" /></>,
   camera: <><path d="M3 7h4l2-3h6l2 3h4v13H3z" /><circle cx="12" cy="13" r="3.6" /></>,
   back: <path d="M15 5 8 12l7 7" />,
 };
 
 // Timeline mobile façon CapCut : la tête reste au centre, la timeline défile sous le doigt.
-// Glisser lentement = image par image ; deux doigts = zoom ; appui long puis glisser = sélectionner une zone.
-function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, stampF, endF, onScrub, onScrubEnd, onZoneStart, onZoneMove, onZoneEnd, onPick }) {
+// Glisser lentement = image par image ; deux doigts ou double toucher = zoom.
+function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick }) {
   const el = useRef(null);
   const [w, setW] = useState(360);
   const [pps, setPps] = useState(40);              // pixels par seconde
-  const g = useRef({ pts: new Map(), start: null, pinch: null, timer: null, zone: false });
+  const g = useRef({ pts: new Map(), start: null, pinch: null, lastTap: 0 });
   useEffect(() => {
     const ro = new ResizeObserver(() => setW(el.current?.clientWidth || 360));
     ro.observe(el.current);
@@ -175,26 +174,20 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
   const span = w / pps, vs = now - span / 2;
   const xp = (t) => `${((t - vs) / span) * 100}%`;
   const maxF = Math.max(0, Math.ceil(dur * F) - 1);
-  const minPps = Math.max(1, w / Math.max(dur, 1)), maxPps = 400;
+  // dézoom maximal : toute la vidéo visible d'un côté de la tête ; zoom maximal : ~16 px par image à 25 i/s
+  // (la tête étant au centre, la vidéo entière doit tenir dans une demi-largeur pour être vue d'un coup)
+  const minPps = (w * 0.46) / Math.max(dur, 0.1), maxPps = 400;
 
   const down = (e) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
     const st = g.current;
     st.pts.set(e.pointerId, e.clientX);
     if (st.pts.size === 2) { // pincement : zoom de la timeline
-      clearTimeout(st.timer);
       const [a, b] = [...st.pts.values()];
       st.pinch = { d: Math.abs(a - b) || 1, pps };
       return;
     }
     st.start = { x: e.clientX, t: now, moved: false };
-    st.timer = setTimeout(() => {
-      if (st.start && !st.start.moved && st.pts.size === 1) {
-        st.zone = true;
-        navigator.vibrate?.(12);
-        onZoneStart(clamp(Math.floor(now * F + 1e-4), 0, maxF));
-      }
-    }, 420);
   };
   const move = (e) => {
     const st = g.current;
@@ -207,19 +200,21 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
     }
     if (!st.start) return;
     const dx = e.clientX - st.start.x;
-    if (Math.abs(dx) > 6) { st.start.moved = true; clearTimeout(st.timer); }
-    if (!st.start.moved && !st.zone) return;
-    const f = clamp(Math.floor((st.start.t - dx / pps) * F + 1e-4), 0, maxF);
-    onScrub(f);
-    if (st.zone) onZoneMove(f);
+    if (Math.abs(dx) > 6) st.start.moved = true;
+    if (!st.start.moved) return;
+    onScrub(clamp(Math.floor((st.start.t - dx / pps) * F + 1e-4), 0, maxF));
   };
   const up = (e) => {
     const st = g.current;
     st.pts.delete(e.pointerId);
-    clearTimeout(st.timer);
     if (st.pts.size >= 1) return;
-    if (st.zone) onZoneEnd(); else if (st.start?.moved) onScrubEnd();
-    st.start = null; st.pinch = null; st.zone = false;
+    if (st.start?.moved) onScrubEnd();
+    else if (st.start && !st.pinch) {
+      // double toucher : tout voir ⇄ zoom de travail
+      const t = performance.now();
+      if (t - st.lastTap < 320) { setPps((p) => (p > minPps * 1.5 ? minPps : 40)); st.lastTap = 0; } else st.lastTap = t;
+    }
+    st.start = null; st.pinch = null;
   };
 
   return (
@@ -229,7 +224,6 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
         ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
             onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />
         : <div key={c.id} className={`mk ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t) }} onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />)}
-      {dur > 0 && endF != null && <div className="selzone" style={{ left: xp(stampF / F), width: `${(((endF - stampF) / F) / span) * 100}%` }} />}
       {dur > 0 && <div className="m-edge" style={{ left: xp(0) }} />}
       {dur > 0 && <div className="m-edge" style={{ left: xp(dur) }} />}
       <div className="m-head" />
@@ -313,7 +307,6 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [expanded, setExpanded] = useState(false);
   const mobile = useMedia('(max-width: 760px)');
   const [sheet, setSheet] = useState(null);      // tiroir des commentaires : null | 'list' | 'compose'
-  const [zoneArm, setZoneArm] = useState(false); // bouton « Zone » : début posé, en attente de la fin
   const noteRef = useRef(null);
   const [compareN, setCompareN] = useState(initialCompare); // version affichée à droite, ou null
   const [slaveDur, setSlaveDur] = useState(0);
@@ -1106,15 +1099,8 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         </div>
   );
 
-  // --- mobile : zone par bouton (début puis fin), tiroir des commentaires ---
-  const zoneTap = () => {
-    vid.current?.pause();
-    if (!zoneArm) { setSel(null); setStampF(curF); setEndF(null); setZoneArm(true); return; }
-    if (curF > stampF) setEndF(curF); else if (curF < stampF) { setEndF(stampF); setStampF(curF); }
-    setZoneArm(false); setToolsOpen(true);
-  };
+  // --- mobile : tiroir des commentaires ---
   const openSheet = (mode) => { vid.current?.pause(); setSheet(mode); if (mode === 'compose') setTimeout(() => noteRef.current?.focus(), 260); };
-  const mZone = useRef(null);
 
   if (mobile) {
     const shortStatus = approval ? (approval.status === 'approved' ? 'Validée' : 'Modifications demandées') : admin ? 'En attente de l’avis du client' : `v${currentN}`;
@@ -1133,27 +1119,26 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         {approvalView}
         {monitorView}
         {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
-        <div className="m-time"><span className="cur">{label(now)}</span><span className="tot"> / {label(dur || 0)}</span></div>
+        <div className="m-time">
+          <div className="m-tc"><span className="cur">{label(now)}</span><span className="tot">/ {label(dur || 0)}</span></div>
+          <button className="m-plus" onClick={() => openSheet('compose')} aria-label={drawing ? 'Commenter avec les dessins' : 'Ajouter un commentaire à ce moment'}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            {drawing && <i>{shapes.length + (pin ? 1 : 0)}</i>}
+          </button>
+          <button className="ghost m-play" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}>{playing ? <IconPause /> : <IconPlay />}</button>
+        </div>
         <MobileTrack dur={dur} now={now} F={F} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
-          tops={tops} stampF={stampF} endF={endF}
-          onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
-          onZoneStart={(f) => { mZone.current = f; vid.current?.pause(); setSel(null); setZoneArm(false); setStampF(f); setEndF(null); setSelecting(true); }}
-          onZoneMove={(f) => { const z = mZone.current; setStampF(Math.min(z, f)); setEndF(f === z ? null : Math.max(z, f)); }}
-          onZoneEnd={() => { setSelecting(false); setToolsOpen(true); }}
+          tops={tops} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
           onPick={(c) => { setSel(c.id); seekT(c.t); }} />
-        <p className="m-hint">{zoneArm ? 'Fais défiler jusqu’à la fin de la zone, puis touche « Fin »' : endF != null ? `Zone ${draftLabel} · ` : 'Glisse la timeline · appui long : zone · deux doigts : zoom'}
-          {!zoneArm && endF != null && <button className="link" onClick={() => setEndF(null)}>retirer</button>}</p>
-        <div className="m-tools" role="toolbar" aria-label="Outils">
-          <button onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}>{playing ? <IconPause /> : <IconPlay />}<span>{playing ? 'Pause' : 'Lecture'}</span></button>
+        <nav className="m-bar m-tools" aria-label="Outils">
           <button className={toolsOpen && tool !== 'pin' ? 'on' : ''} onClick={() => { if (toolsOpen && tool !== 'pin') { setToolsOpen(false); setTool(null); } else { vid.current?.pause(); setToolsOpen(true); setTool(tool && tool !== 'pin' ? tool : 'pen'); } }}><MIcon d={M_ICONS.pen} /><span>Dessiner</span></button>
           <button className={tool === 'pin' ? 'on' : ''} onClick={() => { vid.current?.pause(); setToolsOpen(true); setTool(tool === 'pin' ? null : 'pin'); }}><MIcon d={M_ICONS.pin} /><span>Repère</span></button>
-          <button className={zoneArm || endF != null ? 'on' : ''} onClick={zoneTap}><MIcon d={M_ICONS.zone} /><span>{zoneArm ? 'Fin' : 'Zone'}</span></button>
+          <button className="m-history" onClick={() => openSheet('list')}>
+            <MIcon d={<><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.1A8 8 0 1 1 20 12z" /><path d="M8.5 12h.01M12 12h.01M15.5 12h.01" strokeWidth="2.4" /></>} />
+            <span>Historique</span>{tops.length ? <b>{tops.length}</b> : null}
+          </button>
           {!(isYt || source === 'drive') && <button onClick={capture} disabled={capturing}><MIcon d={M_ICONS.camera} /><span>Capture</span></button>}
-        </div>
-        <div className="m-bar">
-          <button className="ghost" onClick={() => openSheet('list')}>{tops.length} commentaire{tops.length > 1 ? 's' : ''}</button>
-          <button onClick={() => openSheet('compose')}>{drawing ? `Commenter (${shapes.length + (pin ? 1 : 0)} dessin${shapes.length + (pin ? 1 : 0) > 1 ? 's' : ''})` : 'Commenter'}</button>
-        </div>
+        </nav>
         {sheet && <div className="m-veil" onClick={() => setSheet(null)} />}
         <section className={`m-sheet ${sheet ? `open ${sheet}` : ''}`} aria-hidden={!sheet}>
           <button className="m-handle" aria-label="Fermer les commentaires" onClick={() => setSheet(null)}><i /></button>
