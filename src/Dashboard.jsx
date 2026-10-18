@@ -117,24 +117,37 @@ function NewProject({ uid, onDone }) {
 }
 
 // notifications push sur cet appareil (sur iPhone : seulement depuis la web app ajoutée à l'écran d'accueil)
+const Bell = ({ off }) => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z" /><path d="M10 20a2.2 2.2 0 0 0 4 0" />
+    {off && <path d="M3.5 3.5l17 17" />}
+  </svg>
+);
 function NotifyButton() {
   const [st, setSt] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
+  const [tip, setTip] = useState('');
   useEffect(() => { pushState().then(setSt).catch(() => setSt('unsupported')); }, []);
+  useEffect(() => { if (!tip) return; const t = setTimeout(() => setTip(''), 4500); return () => clearTimeout(t); }, [tip]);
   if (!st || st === 'unsupported') return null;
-  const run = async (fn) => {
-    setBusy(true); setMsg('');
-    try { await fn(); setSt(await pushState()); } catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  const label = { on: 'Notifications activées sur cet appareil (toucher pour désactiver)', off: 'Activer les notifications sur cet appareil', install: 'Ajoute Review à l’écran d’accueil (Partager → « Sur l’écran d’accueil ») pour recevoir les notifications', denied: 'Notifications bloquées dans les réglages de l’appareil' }[st];
+  const click = async () => {
+    if (st === 'install' || st === 'denied') return setTip(label);
+    setBusy(true); setTip('');
+    try {
+      if (st === 'on') await disablePush(); else await enablePush();
+      const next = await pushState();
+      setSt(next);
+      setTip(next === 'on' ? 'Notifications activées' : 'Notifications désactivées');
+    } catch (e) { setTip(e.message); } finally { setBusy(false); }
   };
-  if (st === 'install') return <span className="mut notify-hint" title="Partager → « Sur l’écran d’accueil », puis ouvre Review depuis l’icône">Notifications : ajoute Review à l’écran d’accueil</span>;
-  if (st === 'denied') return <span className="mut notify-hint">Notifications bloquées dans les réglages</span>;
   return (
     <span className="notify">
-      {st === 'on'
-        ? <button className="ghost sm on" disabled={busy} onClick={() => run(disablePush)} title="Désactiver sur cet appareil">Notifications activées</button>
-        : <button className="ghost sm" disabled={busy} onClick={() => run(enablePush)}>{busy ? '…' : 'Activer les notifications'}</button>}
-      {msg && <span className="mut notify-hint">{msg}</span>}
+      <button className={`ghost icon-btn ${st === 'on' ? 'on' : ''}`} disabled={busy} onClick={click} aria-label={label} title={label} aria-pressed={st === 'on'}>
+        <Bell off={st === 'denied' || st === 'install'} />
+        {st === 'on' && <i className="notify-dot" />}
+      </button>
+      {tip && <span className="notify-tip" role="status">{tip}</span>}
     </span>
   );
 }
@@ -192,7 +205,7 @@ export default function Dashboard() {
     <div className="wrap">
       <div className="row dashbar" style={{ justifyContent: 'space-between' }}>
         <div className="brand" style={{ margin: 0 }}><span>nocturnz</span><b>/ review</b></div>
-        <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}><NotifyButton /><span className="mut">{user.email}</span><button className="ghost sm" onClick={signOut}>Se déconnecter</button></div>
+        <div className="dash-actions"><NotifyButton /><span className="mut dash-email">{user.email}</span><button className="ghost sm" onClick={signOut}>Se déconnecter</button></div>
       </div>
       <div className="dash-title"><span className="eyebrow">Espace de travail</span><h1>Vos reviews<span>.</span></h1></div>
 

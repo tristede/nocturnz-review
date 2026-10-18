@@ -725,5 +725,13 @@ button.m-play { justify-self: end; width: 44px; height: 44px; padding: 0; displa
 .m-tools button.m-history b { position: absolute; top: 0; right: 8px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 5px; font-size: 10.5px; line-height: 16px; background: var(--acc); color: #fff; }
 .m-bar.m-tools button { height: auto; min-height: 52px; }
 .m-bar.m-tools button svg { width: 22px; height: 22px; flex: none; }
-.notify { display: inline-flex; align-items: center; gap: 8px; }
-.notify-hint { font-size: 12px; }
+/* en-tête de l'accueil : cloche, e-mail et déconnexion alignés sur une même hauteur */
+.dash-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.dash-actions > * { flex: none; }
+.dash-actions .dash-email { font-size: 13px; line-height: 28px; }
+.notify { position: relative; display: inline-flex; }
+button.icon-btn { position: relative; width: 28px; height: 28px; padding: 0; display: inline-grid; place-items: center; }
+button.icon-btn.on { color: #fff; border-color: rgba(142, 123, 255, .55); background: rgba(142, 123, 255, .16); }
+.notify-dot { position: absolute; top: 4px; right: 5px; width: 6px; height: 6px; border-radius: 2px; background: var(--acc); }
+.notify-tip { position: absolute; top: calc(100% + 8px); right: 0; z-index: 20; width: max-content; max-width: 260px; padding: 7px 10px; border-radius: 8px; font-size: 12px; line-height: 1.4; color: #ecebf2; background: rgba(28, 26, 38, .95); border: 1px solid var(--line2); box-shadow: 0 12px 28px -14px #000; }
+@media (max-width: 560px) { .dash-actions .dash-email { display: none; } }
