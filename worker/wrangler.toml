@@ -1,0 +1,14 @@
+name = "nocturnz-review-push"
+main = "src/index.js"
+account_id = "b2169f40ebc0da213b1fdd9793fb52bf"
+compatibility_date = "2026-09-01"
+
+# abonnements des appareils + trace anti-doublon (créé avec : wrangler kv namespace create PUSH)
+[[kv_namespaces]]
+binding = "PUSH"
+id = "edac5fea41cf4fd1a94008f4fcc4f00b"
+
+[vars]
+VAPID_SUBJECT = "https://nocturnz-review.web.app"
+VAPID_PUBLIC_KEY = "BJzPHd2mcKwLZH1LEbth3IEL9RDvNZnCWCPU9b4bjjSar1K7rYFpTGnruKzN05tjt55Im1GksBgnXsDdQ2-TH0k"
+# VAPID_PRIVATE_KEY : secret (wrangler secret put VAPID_PRIVATE_KEY), jamais dans le dépôt

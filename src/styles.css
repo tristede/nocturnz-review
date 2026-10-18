@@ -725,3 +725,5 @@ button.m-play { justify-self: end; width: 44px; height: 44px; padding: 0; displa
 .m-tools button.m-history b { position: absolute; top: 0; right: 8px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 5px; font-size: 10.5px; line-height: 16px; background: var(--acc); color: #fff; }
 .m-bar.m-tools button { height: auto; min-height: 52px; }
 .m-bar.m-tools button svg { width: 22px; height: 22px; flex: none; }
+.notify { display: inline-flex; align-items: center; gap: 8px; }
+.notify-hint { font-size: 12px; }

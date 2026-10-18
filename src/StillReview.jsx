@@ -6,6 +6,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import CommentNavigation from './CommentNavigation';
 import DrawingToolbar from './DrawingToolbar';
 import * as data from './data';
+import { notifyHost } from './push';
 import { KIND_LABEL } from './links';
 import { openStill } from './stills';
 import { COLORS, clamp, parse, hasMarks, Shape, toShape, IconChevron } from './draw';
@@ -145,7 +146,12 @@ export default function StillReview({ aid, title, admin, back = null, deadline =
   };
   const resetDraft = () => { setBody(''); setTool(null); setToolsOpen(false); setPin(null); setShapes([]); setDraft(null); };
 
-  const post = (payload) => data.addComment(aid, currentN, { author: name, ...payload });
+  // le commentaire d'un client déclenche une notification push chez l'hôte
+  const post = async (payload) => {
+    const cid = await data.addComment(aid, currentN, { author: name, ...payload });
+    if (!admin) notifyHost({ aid, n: currentN, cid, kind: 'comment' });
+    return cid;
+  };
   const remember = () => { try { localStorage.setItem('review-name', name); } catch {} setNameOk(true); setEditName(false); };
   const send = async () => {
     if (!body.trim() || !name.trim()) return;
@@ -162,6 +168,7 @@ export default function StillReview({ aid, title, admin, back = null, deadline =
   const setReview = async (st) => {
     if (st && !name.trim()) { setEditName(true); setNeedName(true); return; }
     try { await data.setApproval(aid, currentN, st, name.trim()); } catch { return; }
+    if (st && !admin) notifyHost({ aid, n: currentN, kind: 'status' });
     if (st) remember();
     setNeedName(false);
     setApproval(st ? { status: st, by: name.trim(), at: Date.now() } : null);

@@ -8,3 +8,8 @@ dist
 .claude
 data
 tmp-test
+
+# serveur push
+worker/node_modules
+worker/.dev.vars
+worker/.wrangler

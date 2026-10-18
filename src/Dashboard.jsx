@@ -6,6 +6,7 @@ import * as data from './data';
 import { AddAssetForm, AssetCard, DropBar, DropZone, ExpiredCleanup, HostingProvider, StorageGauge, Thumb, latestOf, openCount } from './library';
 import Notice from './Notice';
 import ProjectDeadline from './ProjectDeadline';
+import { disablePush, enablePush, pushState } from './push';
 
 // menu « ⋯ » d'une tuile de projet : tout gérer sans ouvrir le projet
 function ProjectMenu({ p, uid, onChange }) {
@@ -115,6 +116,29 @@ function NewProject({ uid, onDone }) {
   );
 }
 
+// notifications push sur cet appareil (sur iPhone : seulement depuis la web app ajoutée à l'écran d'accueil)
+function NotifyButton() {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  useEffect(() => { pushState().then(setSt).catch(() => setSt('unsupported')); }, []);
+  if (!st || st === 'unsupported') return null;
+  const run = async (fn) => {
+    setBusy(true); setMsg('');
+    try { await fn(); setSt(await pushState()); } catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  };
+  if (st === 'install') return <span className="mut notify-hint" title="Partager → « Sur l’écran d’accueil », puis ouvre Review depuis l’icône">Notifications : ajoute Review à l’écran d’accueil</span>;
+  if (st === 'denied') return <span className="mut notify-hint">Notifications bloquées dans les réglages</span>;
+  return (
+    <span className="notify">
+      {st === 'on'
+        ? <button className="ghost sm on" disabled={busy} onClick={() => run(disablePush)} title="Désactiver sur cet appareil">Notifications activées</button>
+        : <button className="ghost sm" disabled={busy} onClick={() => run(enablePush)}>{busy ? '…' : 'Activer les notifications'}</button>}
+      {msg && <span className="mut notify-hint">{msg}</span>}
+    </span>
+  );
+}
+
 export default function Dashboard() {
   const { user, ready, signIn, signOut } = useAuth();
   const [lib, setLib] = useState(null);
@@ -168,7 +192,7 @@ export default function Dashboard() {
     <div className="wrap">
       <div className="row dashbar" style={{ justifyContent: 'space-between' }}>
         <div className="brand" style={{ margin: 0 }}><span>nocturnz</span><b>/ review</b></div>
-        <div className="row"><span className="mut">{user.email}</span><button className="ghost sm" onClick={signOut}>Se déconnecter</button></div>
+        <div className="row" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}><NotifyButton /><span className="mut">{user.email}</span><button className="ghost sm" onClick={signOut}>Se déconnecter</button></div>
       </div>
       <div className="dash-title"><span className="eyebrow">Espace de travail</span><h1>Vos reviews<span>.</span></h1></div>
 

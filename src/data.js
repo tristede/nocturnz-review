@@ -53,7 +53,7 @@ const r4 = (v) => Math.round(v * 1e4) / 1e4;
 export async function addComment(aid, n, c) {
   let shapes = c.shapes?.length ? JSON.stringify(c.shapes.slice(0, 30)) : null;
   if (shapes && shapes.length > 55000) shapes = null; // plafond des règles : mieux vaut perdre le dessin que le commentaire
-  await addDoc(commentsRef(aid, n), {
+  const ref = await addDoc(commentsRef(aid, n), {
     author: c.author.trim().slice(0, 60),
     body: c.body.trim().slice(0, 2000),
     t: c.t,
@@ -65,6 +65,7 @@ export async function addComment(aid, n, c) {
     resolved: false,
     created: serverTimestamp(),
   });
+  return ref.id;
 }
 export const setResolved = (aid, n, cid, resolved) => updateDoc(doc(commentsRef(aid, n), cid), { resolved: !!resolved });
 

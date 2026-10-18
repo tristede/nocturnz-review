@@ -37,8 +37,13 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
   document.removeEventListener('keydown', dismissDetails);
 });
 
-// l'ancien service worker de lecture Drive n'a plus lieu d'être : on le retire chez ceux qui l'ont encore
-navigator.serviceWorker?.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+// service worker de la web app (notifications push) ; l'ancien, celui de la lecture Drive, est retiré
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then((rs) => rs.forEach((r) => { if (/drive-sw\.js$/.test(r.active?.scriptURL || r.installing?.scriptURL || '')) r.unregister(); }))
+    .catch(() => {});
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
