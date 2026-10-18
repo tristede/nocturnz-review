@@ -6,7 +6,7 @@ import * as data from './data';
 import { AddAssetForm, AssetCard, DropBar, DropZone, ExpiredCleanup, HostingProvider, StorageGauge, Thumb, latestOf, openCount } from './library';
 import Notice from './Notice';
 import ProjectDeadline from './ProjectDeadline';
-import { disablePush, enablePush, pushState } from './push';
+import { disablePush, enablePush, isIOS, isStandalone, pushState } from './push';
 
 // menu « ⋯ » d'une tuile de projet : tout gérer sans ouvrir le projet
 function ProjectMenu({ p, uid, onChange }) {
@@ -152,6 +152,55 @@ function NotifyButton() {
   );
 }
 
+// Tutoriel iPhone : 1) ajouter Review à l'écran d'accueil depuis Safari, 2) activer les notifications dans la web app.
+const GUIDE_KEY = 'review-ios-guide-later';
+const ShareIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3v12M8 7l4-4 4 4" /><path d="M6 11H5v10h14V11h-1" /></svg>;
+const AddIcon = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4" /><path d="M12 8v8M8 12h8" /></svg>;
+function IOSGuide() {
+  const [step, setStep] = useState(null); // 'install' | 'notify' | null
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    if (!isIOS()) return;
+    try { if (Number(localStorage.getItem(GUIDE_KEY)) > Date.now()) return; } catch {}
+    if (!isStandalone()) { setStep('install'); return; }
+    pushState().then((st) => { if (st === 'off') setStep('notify'); }).catch(() => {});
+  }, []);
+  if (!step) return null;
+  const later = () => { try { localStorage.setItem(GUIDE_KEY, String(Date.now() + 7 * 86_400_000)); } catch {} setStep(null); };
+  const activate = async () => {
+    setBusy(true); setErr('');
+    try { await enablePush(); setStep(null); } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="ios-guide" role="dialog" aria-label="Installer Review sur l’iPhone">
+      <img src="/icon-192.png" alt="" className="ios-guide-logo" />
+      {step === 'install' ? (
+        <>
+          <h2>Review sur ton iPhone</h2>
+          <p className="mut">Ajoute-la à l’écran d’accueil : elle s’ouvre comme une app et peut t’envoyer une notification à chaque retour client.</p>
+          <ol>
+            <li><span className="ios-step">1</span><span>Touche <b className="ios-key"><ShareIcon /> Partager</b> dans la barre de Safari.</span></li>
+            <li><span className="ios-step">2</span><span>Choisis <b className="ios-key"><AddIcon /> Sur l’écran d’accueil</b>, puis « Ajouter ».</span></li>
+            <li><span className="ios-step">3</span><span>Ouvre Review depuis la nouvelle icône et active les notifications.</span></li>
+          </ol>
+          <button className="ghost" onClick={later}>Plus tard</button>
+        </>
+      ) : (
+        <>
+          <h2>Dernière étape</h2>
+          <p className="mut">Active les notifications pour être prévenu dès qu’un client commente ou valide une version.</p>
+          <div className="row" style={{ justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button onClick={activate} disabled={busy}>{busy ? '…' : 'Activer les notifications'}</button>
+            <button className="ghost" onClick={later}>Plus tard</button>
+          </div>
+          {err && <p className="mut warn">{err}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user, ready, signIn, signOut } = useAuth();
   const [lib, setLib] = useState(null);
@@ -207,6 +256,7 @@ export default function Dashboard() {
         <div className="brand" style={{ margin: 0 }}><span>nocturnz</span><b>/ review</b></div>
         <div className="dash-actions"><NotifyButton /><span className="mut dash-email">{user.email}</span><button className="ghost sm" onClick={signOut}>Se déconnecter</button></div>
       </div>
+      <IOSGuide />
       <div className="dash-title"><span className="eyebrow">Espace de travail</span><h1>Vos reviews<span>.</span></h1></div>
 
       <AddAssetForm uid={user.uid} projects={lib?.projects} onDone={reload} />
