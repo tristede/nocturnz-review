@@ -55,11 +55,11 @@ async function computePeaks(url, dur) {
 // teinte selon l'intensité : bleu profond (faible) → violet → mauve clair (fort)
 const tintOf = (v) => `hsl(${Math.round(228 + 60 * v)} ${Math.round(70 + 8 * v)}% ${Math.round(46 + 32 * v)}%)`;
 const FLAT = 'rgba(150,132,255,.85)';
-const WAVE_STYLES = [['bars', 'Barres'], ['solid', 'Plein'], ['line', 'Ligne'], ['low', 'Bas']];
+const WAVE_STYLES = [['bars', 'Barres'], ['solid', 'Plein'], ['line', 'Ligne']];
 
-// onde sonore : suit exactement la vue (zoom/défilement) de la timeline
-// `stereo` affiche deux voies (gauche en haut, droite en bas), sinon les deux canaux sont fusionnés
-function Wave({ peaks, dur, vs, span, top, variant, tint, stereo, muted }) {
+// onde sonore : suit exactement la vue (zoom/défilement) de la timeline ; les deux canaux sont fusionnés
+// low = onde posée en bas de la piste au lieu d'être centrée
+function Wave({ peaks, dur, vs, span, top, variant, tint, low, muted }) {
   const ref = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const merged = useMemo(() => (peaks.r ? peaks.l.map((v, i) => Math.max(v, peaks.r[i])) : peaks.l), [peaks]);
@@ -89,48 +89,45 @@ function Wave({ peaks, dur, vs, span, top, variant, tint, stereo, muted }) {
         for (let i = i0; i < i1; i++) if (arr[i] > m) m = arr[i];
         return m / 255;
       };
-      if (variant === 'bars' || variant === 'low') {
+      const yOf = (hh) => (low ? y0 + hl - hh : y0 + (hl - hh) / 2); // haut d'une barre de hauteur hh
+      if (variant === 'bars') {
         for (let x = 0; x < w; x += 4) {
           const v = col(x, x + 4);
           if (v == null) continue;
           const hh = Math.max(2, v * hl * 0.92);
           g.fillStyle = color(v);
-          g.fillRect(x, variant === 'low' ? y0 + hl - hh : y0 + (hl - hh) / 2, 3, hh);
+          g.fillRect(x, yOf(hh), 3, hh);
         }
       } else if (variant === 'solid') {
         for (let x = 0; x < w; x++) {
           const v = col(x, x + 1);
           if (v == null) continue;
-          const hh = Math.max(1, v * hl);
+          const hh = Math.max(1, v * hl * (low ? 0.92 : 1));
           g.fillStyle = color(v);
-          g.fillRect(x, y0 + (hl - hh) / 2, 1, hh);
+          g.fillRect(x, yOf(hh), 1, hh);
         }
-      } else { // line : enveloppe fine, haut et bas
-        g.lineWidth = 1.5; g.lineCap = 'round';
-        let prev = null;
-        const mid = y0 + hl / 2;
-        for (let x = 0; x < w; x += 2) {
-          const v = col(x, x + 2);
-          if (v == null) { prev = null; continue; }
-          const y = (v * hl * 0.92) / 2;
-          if (prev != null) {
+      } else { // line : un seul trait lisse qui monte avec le volume, depuis le milieu (centrée) ou depuis le bas
+        g.lineWidth = 1.6; g.lineCap = 'round'; g.lineJoin = 'round';
+        const step = 2, base = low ? y0 + hl - 1 : y0 + hl / 2, room = low ? hl - 3 : hl / 2 - 2;
+        let px = null, py = null;
+        for (let x = 0; x < w; x += step) {
+          const v = col(x, x + step);
+          if (v == null) { px = null; continue; }
+          const y = base - v * room;
+          if (px != null) {
             g.strokeStyle = color(v);
-            g.beginPath(); g.moveTo(x - 2, mid - prev); g.lineTo(x, mid - y); g.stroke();
-            g.beginPath(); g.moveTo(x - 2, mid + prev); g.lineTo(x, mid + y); g.stroke();
+            g.beginPath(); g.moveTo(px, py); g.lineTo(x, y); g.stroke();
           }
-          prev = y;
+          px = x; py = y;
         }
+        // repère discret de la ligne de base
+        g.fillStyle = 'rgba(255,255,255,.07)';
+        g.fillRect(0, Math.round(base), w, 1);
       }
     };
 
-    if (stereo && peaks.r) {
-      const gap = 3, hl = (h - gap) / 2;
-      lane(peaks.l, 0, hl);
-      lane(peaks.r, hl + gap, hl);
-      g.fillStyle = 'rgba(255,255,255,.08)';
-      g.fillRect(0, hl + gap / 2 - 0.5, w, 1);
-    } else lane(merged, 0, h);
-  }, [peaks, merged, dur, vs, span, size, variant, tint, stereo, muted]);
+    lane(merged, 0, h);
+  }, [peaks, merged, dur, vs, span, size, variant, tint, low, muted]);
   return <canvas ref={ref} className="wave" style={{ top, height: `calc(100% - ${top}px)` }} />;
 }
 
@@ -239,7 +236,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
   const [fileSize, setFileSize] = useState(null);           // taille du fichier Drive (pour prévenir l'hôte)
   const [waveStyle, setWaveStyle] = useState('bars');
   const [waveTint, setWaveTint] = useState('vol');
-  const [waveChannels, setWaveChannels] = useState('mono'); // 'mono' (fusionné) | 'stereo' (2 voies)
+  const [waveLow, setWaveLow] = useState(false);           // onde posée en bas de la piste
   const [stepMode, setStepMode] = useState('frame'); // pas des flèches : 'frame' | 'second'
 
   const [name, setName] = useState('');
@@ -290,9 +287,10 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
       setName(n); setNameOk(!!n);
       setPro(localStorage.getItem('review-pro') === '1');
       if (localStorage.getItem('review-step') === 'second') setStepMode('second');
-      const ws = localStorage.getItem('review-wave'); if (WAVE_STYLES.some(([k]) => k === ws)) setWaveStyle(ws);
+      const ws = localStorage.getItem('review-wave');
+      if (WAVE_STYLES.some(([k]) => k === ws)) setWaveStyle(ws);
+      if (ws === 'low' || localStorage.getItem('review-wavelow') === '1') setWaveLow(true); // ancien style « Bas »
       if (localStorage.getItem('review-wavetint') === 'flat') setWaveTint('flat');
-      if (localStorage.getItem('review-wavech') === 'stereo') setWaveChannels('stereo');
       if (!initialFps) { const f = Number(localStorage.getItem(`fps:${aid}:${currentN}`)); if (f) setFps(f); }
     } catch {}
     const c = new URLSearchParams(location.search).get('c');
@@ -727,10 +725,51 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
   // le dessin en cours appartient à l'image du commentaire en préparation
   const draftHere = atFrame(stampF, endF);
 
+  // --- timeline : clic / glisser = se déplacer ; appui long (0,35 s) puis glisser = sélectionner une zone ---
+  const [selecting, setSelecting] = useState(false);
+  const press = useRef(null);
+  const noteRef = useRef(null);
+  const onTrackDown = (e) => {
+    if (e.button !== 0) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    const f = Math.floor(timeAt(e) * F);
+    scrubTo(f, true);
+    const p = { startF: f, x0: e.clientX, selecting: false };
+    p.timer = setTimeout(() => {
+      p.selecting = true;
+      vid.current?.pause();
+      setSel(null); setStampF(p.startF); setEndF(null); setSelecting(true);
+    }, 350);
+    press.current = p;
+  };
+  const onTrackMove = (e) => {
+    setHover({ x: e.clientX - e.currentTarget.getBoundingClientRect().left, t: timeAt(e) });
+    const p = press.current;
+    if (!p || e.buttons !== 1) return;
+    const f = Math.max(0, Math.floor(timeAt(e) * F));
+    if (p.selecting) {
+      // la zone va de l'appui jusqu'au pointeur, dans un sens ou dans l'autre
+      setStampF(Math.min(p.startF, f)); setEndF(f === p.startF ? null : Math.max(p.startF, f));
+      return;
+    }
+    if (Math.abs(e.clientX - p.x0) > 4) clearTimeout(p.timer); // ça bouge : c'est un déplacement, pas un appui long
+    scrubTo(f);
+  };
+  const onTrackUp = () => {
+    const p = press.current;
+    press.current = null;
+    if (!p) return;
+    clearTimeout(p.timer);
+    if (!p.selecting) { flushScrub(); return; }
+    setSelecting(false);
+    seekF(Math.min(p.startF, stampF)); // la tête se cale au début de la zone
+    setToolsOpen(true);               // prêt à dessiner sur la zone…
+    setTimeout(() => noteRef.current?.focus(), 0); // …et à écrire la note
+  };
+
   const askName = !nameOk || editName;
   const draftLabel = endF != null ? `${label(stampF / F)} → ${label(endF / F)}` : label(stampF / F);
 
-  const stereoOn = waveChannels === 'stereo' && !!peaks?.r;
   const flatPeaks = useMemo(() => ({ l: new Uint8Array(400).fill(16), r: null }), []); // onde plate de remplacement
 
   return (
@@ -883,13 +922,10 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
         )}
         </div>
 
-        <div className={`track ${pro ? 'pro' : ''}`} ref={track}
-          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); scrubTo(Math.floor(timeAt(e) * F), true); }}
-          onPointerMove={(e) => { setHover({ x: e.clientX - e.currentTarget.getBoundingClientRect().left, t: timeAt(e) }); if (e.buttons === 1) scrubTo(Math.floor(timeAt(e) * F)); }}
-          onPointerUp={flushScrub}
+        <div className={`track ${pro ? 'pro' : ''} ${selecting ? 'selecting' : ''}`} ref={track}
+          onPointerDown={onTrackDown} onPointerMove={onTrackMove} onPointerUp={onTrackUp} onPointerCancel={onTrackUp}
           onPointerLeave={() => setHover(null)}>
-          {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} top={pro ? 16 : 0} variant={waveStyle} tint={waveTint} stereo={stereoOn} />}
-          {stereoOn && <><span className="lane-tag" style={{ top: pro ? 20 : 5 }}>G</span><span className="lane-tag" style={{ bottom: 5 }}>D</span></>}
+          {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} top={pro ? 16 : 0} variant={waveStyle} tint={waveTint} low={waveLow} />}
           {pro && ticks.out.map((t) => (
             <div key={t} className="tick" style={{ left: xp(t) }}><span>{tickLabel(t)}</span></div>
           ))}
@@ -898,7 +934,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
                 onPointerDown={(e) => { e.stopPropagation(); setSel(c.id); seekT(c.t); }} />
             : <div key={c.id} className={`mk ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t) }} title={`${label(c.t)} — ${c.author}`}
                 onPointerDown={(e) => { e.stopPropagation(); setSel(c.id); seekT(c.t); }} />)}
-          {dur > 0 && endF != null && <div className="seg draft" style={{ left: xp(stampF / F), width: `${(((endF - stampF) / F) / span) * 100}%` }} />}
+          {dur > 0 && endF != null && <div className="selzone" style={{ left: xp(stampF / F), width: `${(((endF - stampF) / F) / span) * 100}%` }} />}
           <div className="head" style={{ left: xp(now) }} />
           {hover && <div className="hov" style={{ left: hover.x }}><span>{label(hover.t)}</span></div>}
         </div>
@@ -944,7 +980,7 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
             </div>
             <div className="dock-group">
               <label>Raccourcis</label>
-              <span className="mut" style={{ fontSize: 12, lineHeight: '24px' }}>← → pas · Maj + flèche : l’autre pas · S : changer · molette : zoom</span>
+              <span className="mut" style={{ fontSize: 12, lineHeight: '24px' }}>← → pas · Maj + flèche : l’autre pas · S : changer · molette : zoom · appui long : zone</span>
             </div>
             {peaks && (
               <>
@@ -955,10 +991,10 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
                   </div>
                 </div>
                 <div className="dock-group">
-                  <label>Canaux</label>
+                  <label>Position</label>
                   <div className="seg-ctl sm">
-                    <button className={waveChannels === 'mono' ? 'on' : ''} onClick={() => savePref('review-wavech', 'mono', setWaveChannels)}>Mono</button>
-                    <button className={waveChannels === 'stereo' ? 'on' : ''} disabled={!peaks.r} title={peaks.r ? '' : 'Cette vidéo est en mono'} onClick={() => savePref('review-wavech', 'stereo', setWaveChannels)}>Stéréo</button>
+                    <button className={!waveLow ? 'on' : ''} onClick={() => savePref('review-wavelow', '0', () => setWaveLow(false))}>Centrée</button>
+                    <button className={waveLow ? 'on' : ''} onClick={() => savePref('review-wavelow', '1', () => setWaveLow(true))}>En bas</button>
                   </div>
                 </div>
                 <div className="dock-group">
@@ -1075,7 +1111,10 @@ export default function Review({ aid, title, admin, back = null, initialFps, ini
               {endF != null && <button className="link" style={{ padding: 0 }} onClick={() => setEndF(null)}>retirer la plage</button>}
             </div>
           )}
-          <textarea rows={3} placeholder={`Ton commentaire à ${draftLabel}…`} value={body}
+          {!pro && endF != null && (
+            <div className="zone-line mut">Zone {draftLabel} · <button className="link" style={{ padding: 0 }} onClick={() => setEndF(null)}>retirer la zone</button></div>
+          )}
+          <textarea ref={noteRef} rows={3} placeholder={endF != null ? `Ta note sur ${draftLabel}…` : `Ton commentaire à ${draftLabel}…`} value={body}
             onFocus={beginCompose} onChange={(e) => setBody(e.target.value)}
             onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send(); }} />
           <div className="row" style={{ justifyContent: 'space-between' }}>

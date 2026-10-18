@@ -364,3 +364,8 @@ a.btn-link:hover { filter: brightness(1.09); }
 .guide a { color: #c9bfff; }
 pre.code { margin: 8px 0; padding: 10px 12px; border-radius: 8px; background: rgba(0, 0, 0, .35); border: 1px solid var(--line); font-size: 11.5px; overflow-x: auto; white-space: pre; }
 .hosting-form .seg-ctl { justify-self: start; }
+
+/* zone sélectionnée dans la timeline (appui long ou In/Out) */
+.selzone { position: absolute; top: 0; bottom: 0; z-index: 2; pointer-events: none; background: rgba(255, 93, 115, .16); border-left: 2px solid #ff5d73; border-right: 2px solid #ff5d73; }
+.track.selecting { cursor: col-resize; }
+.zone-line { font-size: 12px; }
