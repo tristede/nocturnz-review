@@ -130,3 +130,26 @@ export const encodePeaks = ({ l, r }) => {
   all.set(l); all.set(r, l.length);
   return `2:${bytesToB64(all)}`;
 };
+
+// Méthode simple, tout format lisible par le navigateur (WebM, MKV, MP3…) : on décode tout le son en mémoire.
+// Réservée aux fichiers raisonnables (le son décodé prend ~10 Mo par minute). dur : durée de la timeline, sinon celle du son.
+export async function peaksFromBuffer(arrayBuffer, dur) {
+  let audio;
+  try { audio = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(arrayBuffer); } catch { return null; }
+  const total = Number.isFinite(dur) && dur > 0 ? dur : audio.duration;
+  const n = bucketsFor(total);
+  const chans = Math.min(2, audio.numberOfChannels);
+  const raw = [];
+  for (let c = 0; c < chans; c++) {
+    const d = audio.getChannelData(c), out = new Float32Array(n), sr = audio.sampleRate;
+    for (let i = 0; i < n; i++) {
+      const a = Math.floor(((i * total) / n) * sr), b = Math.min(d.length, Math.floor((((i + 1) * total) / n) * sr));
+      const step = Math.max(1, Math.floor((b - a) / 64));
+      let m = 0;
+      for (let j = a; j < b; j += step) { const v = Math.abs(d[j]); if (v > m) m = v; }
+      out[i] = m;
+    }
+    raw.push(out);
+  }
+  return toPeaks(raw);
+}

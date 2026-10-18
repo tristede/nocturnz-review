@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as data from './data';
 import { videoUrl, driveMeta } from './links';
-import { peaksFromLocalMp4, encodePeaks, b64ToBytes } from './audioPeaks';
+import { peaksFromLocalMp4, peaksFromBuffer, encodePeaks, b64ToBytes } from './audioPeaks';
 import { COLORS, TOOLS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause, IconChevron } from './draw';
 
 const PRESETS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
@@ -49,27 +49,7 @@ const decodePeaks = (str) => {
 async function computePeaks(url, dur) {
   const res = await fetch(url);
   if (!res.ok || Number(res.headers.get('content-length') || 0) > 400e6) return null;
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  let audio;
-  try { audio = await ctx.decodeAudioData(await res.arrayBuffer()); } catch { return null; } finally { ctx.close(); }
-  const n = Math.min(10000, Math.max(200, Math.round(dur * 200)));
-  const per = audio.length / n;
-  const chans = Math.min(2, audio.numberOfChannels);
-  const raw = [];
-  for (let c = 0; c < chans; c++) {
-    const d = audio.getChannelData(c), out = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const a = Math.floor(i * per), b = Math.min(d.length, Math.floor((i + 1) * per));
-      const step = Math.max(1, Math.floor((b - a) / 64));
-      let m = 0;
-      for (let j = a; j < b; j += step) { const v = Math.abs(d[j]); if (v > m) m = v; }
-      out[i] = m;
-    }
-    raw.push(out);
-  }
-  const max = Math.max(...raw.map((o) => Math.max(...o))) || 1; // même échelle pour les deux canaux
-  const to8 = (o) => Uint8Array.from(o, (v) => Math.round(255 * Math.pow(v / max, 0.6)));
-  return { l: to8(raw[0]), r: raw[1] ? to8(raw[1]) : null };
+  return peaksFromBuffer(await res.arrayBuffer(), dur);
 }
 
 // teinte selon l'intensité : bleu profond (faible) → violet → mauve clair (fort)

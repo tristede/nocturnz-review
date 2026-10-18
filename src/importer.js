@@ -1,6 +1,6 @@
 // Import d'un fichier depuis l'ordinateur de l'hôte vers son hébergement : contrôle de la place, vignette,
 // onde sonore calculée sur place (le fichier est déjà là, inutile de le relire depuis le stockage), envoi.
-import { peaksFromLocalMp4, encodePeaks } from './audioPeaks';
+import { peaksFromLocalMp4, peaksFromBuffer, encodePeaks } from './audioPeaks';
 import { kindOf, KIND_LABEL } from './links';
 import { fmtGB, publicUrl, uploadFile, usage } from './storage';
 
@@ -54,7 +54,12 @@ export async function importFile({ hosting, file, aid, n = 1, onStep, onProgress
     const meta = await videoMeta(file);
     thumbBlob = meta.thumb;
     // l'onde se calcule pendant l'envoi ; un échec ne bloque pas l'import (elle pourra être ajoutée plus tard)
-    wave = meta.duration ? peaksFromLocalMp4(file, meta.duration).then(encodePeaks).catch(() => null) : Promise.resolve(null);
+    // MP4/MOV même très lourds : lecture de la seule piste son ; autres formats (WebM…) : décodage complet si raisonnable
+    const dur = Number.isFinite(meta.duration) ? meta.duration : null;
+    wave = (dur ? peaksFromLocalMp4(file, dur) : Promise.reject())
+      .catch(async () => (file.size <= 400e6 ? peaksFromBuffer(await file.arrayBuffer(), dur) : null))
+      .then((p) => (p ? encodePeaks(p) : null))
+      .catch(() => null);
   }
 
   onStep?.(`Envoi du fichier (${KIND_LABEL[kind] || 'fichier'}, ${fmtGB(file.size)})…`);
