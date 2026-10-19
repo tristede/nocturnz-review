@@ -303,10 +303,9 @@ export default function Dashboard() {
   if (!ready) return <Notice title="Chargement…" />;
   if (!user) {
     return (
-      <Notice title="Review" text="Club privé : on y entre sur l’invitation d’un membre. Si tu as été invité, connecte-toi avec l’adresse Gmail à laquelle tu as reçu l’invitation. Tes clients, eux, ouvrent directement leur lien de review.">
+      <Notice title="Review" text="Club privé, sur invitation uniquement. Connecte-toi avec l’adresse Gmail qui a été invitée.">
         <div className="row" style={{ flexWrap: 'wrap' }}>
-          <button onClick={() => signIn().catch((e) => setErr(e.message))}>J’ai une invitation : me connecter</button>
-          <a className="ghost-link" href="https://nocturnz.xyz/review/#contact">Demander une invitation</a>
+          <button onClick={() => signIn().catch((e) => setErr(e.message))}>Me connecter</button>
           {usingEmulators && <button className="ghost" onClick={() => window.__devSignIn('host@example.test').catch((e) => setErr(e.message))}>Entrer en aperçu local</button>}
         </div>
         {err && <p className="mut" style={{ marginTop: 14 }}>{err}</p>}
@@ -315,9 +314,8 @@ export default function Dashboard() {
   }
   if (denied) {
     return (
-      <Notice title="Accès refusé" text="Review est un club privé : on y entre sur l’invitation d’un membre. Si quelqu’un t’a invité, connecte-toi avec l’adresse Gmail à laquelle il t’a invité.">
+      <Notice title="Accès refusé" text="Cette adresse n’a pas été invitée au club. Si on t’a invité, c’est avec une autre adresse Gmail.">
         <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={() => switchAccount().catch(() => {})}>Changer de compte</button></p>
-        <p style={{ marginTop: 14 }}><a className="btn-link" href="https://nocturnz.xyz/review/">Demander un accès</a></p>
       </Notice>
     );
   }
