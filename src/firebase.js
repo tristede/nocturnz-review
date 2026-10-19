@@ -17,5 +17,9 @@ if (usingEmulators) {
     signInWithCredential(auth, GoogleAuthProvider.credential(JSON.stringify({ sub: email, email, email_verified: true })));
 }
 
-export const signInWithGoogle = () => signInWithPopup(auth, new GoogleAuthProvider());
+// toujours proposer le choix du compte : sinon Google reconnecte d'office le dernier compte utilisé
+const googleProvider = () => { const p = new GoogleAuthProvider(); p.setCustomParameters({ prompt: 'select_account' }); return p; };
+export const signInWithGoogle = () => signInWithPopup(auth, googleProvider());
+// « Changer de compte » : déconnexion puis choix d'un autre compte Google
+export const switchGoogleAccount = async () => { await signOut(auth); return signInWithPopup(auth, googleProvider()); };
 export const signOutUser = () => signOut(auth);

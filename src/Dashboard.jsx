@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { usingEmulators } from './firebase';
 import * as data from './data';
-import { AddAssetForm, AssetCard, DropBar, DropZone, ExpiredCleanup, HostingProvider, StorageGauge, Thumb, latestOf, openCount } from './library';
+import { AddAssetForm, AssetCard, DeleteButton, DropBar, DropZone, ExpiredCleanup, HostingProvider, StorageGauge, Thumb, latestOf, openCount } from './library';
 import Notice from './Notice';
 import ProjectDeadline from './ProjectDeadline';
 import { disablePush, enablePush, isIOS, isStandalone, pushState } from './push';
@@ -201,8 +201,89 @@ function IOSGuide() {
   );
 }
 
+// Club privé : inviter quelqu'un (2 places par membre, illimité pour un admin), voir ses invités, annuler
+const PeopleIcon = () => <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5" /><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.8c1.7.8 2.7 2.5 3 5.2" /></svg>;
+function ClubButton({ user }) {
+  const [open, setOpen] = useState(false);
+  const [st, setSt] = useState(null); // { admin, cards, used }
+  const [email, setEmail] = useState('');
+  const [msg, setMsg] = useState({ text: '', ok: false });
+  const [sent, setSent] = useState('');
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    const admin = await data.isClubAdmin();
+    const club = await data.loadClub(user.uid, admin);
+    setSt({ admin, ...club });
+  }, [user.uid]);
+  useEffect(() => { if (open && !st) load().catch((e) => setMsg({ text: e.message })); }, [open, st, load]);
+  const me = { uid: user.uid, name: user.displayName, admin: st?.admin, used: st?.used ?? 0 };
+  const left = st ? (st.admin ? Infinity : Math.max(0, data.CLUB_MAX - st.used)) : 0;
+  const invite = async (e) => {
+    e.preventDefault();
+    setBusy(true); setMsg({ text: '' }); setSent('');
+    try {
+      const isNew = await data.clubInvite(me, email);
+      if (!isNew) setMsg({ text: `${email.trim().toLowerCase()} est déjà membre ou invité.` });
+      else { setSent(email.trim().toLowerCase()); setEmail(''); await load(); }
+    } catch (ex) { setMsg({ text: ex.message }); } finally { setBusy(false); }
+  };
+  const inviteText = (to) => `Je t’invite sur Nocturnz Review (club privé, review vidéo à l’image près) : ouvre ${location.origin} et connecte-toi avec Google (${to}).`;
+  const copy = async (to) => {
+    try { await navigator.clipboard.writeText(inviteText(to)); setMsg({ text: 'Message copié.', ok: true }); } catch { setMsg({ text: inviteText(to), ok: true }); }
+  };
+  const share = (to) => navigator.share?.({ title: 'Invitation Nocturnz Review', text: inviteText(to) }).catch(() => {});
+  const cancel = async (c) => {
+    try { await data.cancelClubInvite(me, c.email); await load(); } catch (ex) { setMsg({ text: ex.message }); }
+  };
+  const others = (st?.cards || []).filter((c) => c.email !== String(user.email).toLowerCase());
+  return (
+    <span className="club">
+      <button className={`ghost icon-btn ${open ? 'on' : ''}`} onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label="Club privé : inviter quelqu’un" title="Club privé : inviter quelqu’un"><PeopleIcon /></button>
+      {open && (
+        <>
+          <div className="menu-veil" onClick={() => setOpen(false)} />
+          <div className="club-panel" role="dialog" aria-label="Club privé">
+            <div className="club-head">
+              <strong>Club privé</strong>
+              <span className="mut">{!st ? '…' : st.admin ? 'admin · invitations illimitées' : `${left} invitation${left > 1 ? 's' : ''} sur ${data.CLUB_MAX}`}</span>
+            </div>
+            <p className="mut club-intro">Les membres créent leurs propres reviews. Tes clients, eux, n’ont pas besoin d’être membres : ils utilisent le lien de review.</p>
+            {st && left > 0 && (
+              <form className="row" onSubmit={invite}>
+                <input type="email" inputMode="email" autoComplete="off" placeholder="adresse Gmail à inviter" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <button className="sm" disabled={busy}>{busy ? '…' : 'Inviter'}</button>
+              </form>
+            )}
+            {sent && (
+              <div className="club-sent">
+                <span><b>{sent}</b> peut entrer. Envoie-lui le lien :</span>
+                <div className="row">
+                  <button className="ghost sm" onClick={() => copy(sent)}>Copier le message</button>
+                  {navigator.share && <button className="ghost sm" onClick={() => share(sent)}>Envoyer…</button>}
+                </div>
+              </div>
+            )}
+            {msg.text && <p className={`mut ${msg.ok ? 'okmsg' : 'warn'}`}>{msg.text}</p>}
+            {others.length > 0 && (
+              <ul className="club-list">
+                {others.map((c) => (
+                  <li key={c.email}>
+                    <span className="club-mail">{c.email}{st.admin && c.byName ? <small> · par {c.byName}</small> : null}</span>
+                    <span className={`club-state ${c.joined ? 'ok' : ''}`}>{c.joined ? 'membre' : 'en attente'}</span>
+                    {(st.admin || !c.joined) && <DeleteButton label={c.joined ? 'Retirer du club' : 'Annuler l’invitation'} confirmText={c.joined ? 'Retirer ?' : 'Annuler ?'} onConfirm={() => cancel(c)} />}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
+
 export default function Dashboard() {
-  const { user, ready, signIn, signOut } = useAuth();
+  const { user, ready, signIn, signOut, switchAccount } = useAuth();
   const [lib, setLib] = useState(null);
   const [denied, setDenied] = useState(false);
   const [err, setErr] = useState('');
@@ -211,6 +292,7 @@ export default function Dashboard() {
   const reload = useCallback(async () => {
     if (!user) return;
     try {
+      await data.activateCard(user); // invité du club : sa carte devient « membre » à la première connexion
       const [assets, projects] = await Promise.all([data.listAssets(user.uid), data.listProjects(user.uid)]);
       setLib({ assets, projects });
       setDenied(false);
@@ -233,8 +315,8 @@ export default function Dashboard() {
   }
   if (denied) {
     return (
-      <Notice title="Accès refusé" text="Ce compte n’est pas autorisé à créer des reviews.">
-        <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={signOut}>Changer de compte</button></p>
+      <Notice title="Accès refusé" text="Review est un club privé : on y entre sur l’invitation d’un membre. Si quelqu’un t’a invité, connecte-toi avec l’adresse Gmail à laquelle il t’a invité.">
+        <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={() => switchAccount().catch(() => {})}>Changer de compte</button></p>
         <p style={{ marginTop: 14 }}><a className="btn-link" href="https://nocturnz.xyz/review/">Demander un accès</a></p>
       </Notice>
     );
@@ -254,7 +336,7 @@ export default function Dashboard() {
     <div className="wrap">
       <div className="row dashbar" style={{ justifyContent: 'space-between' }}>
         <div className="brand" style={{ margin: 0 }}><span>nocturnz</span><b>/ review</b></div>
-        <div className="dash-actions"><NotifyButton /><span className="mut dash-email">{user.email}</span><button className="ghost sm" onClick={signOut}>Se déconnecter</button></div>
+        <div className="dash-actions"><ClubButton user={user} /><NotifyButton /><span className="mut dash-email">{user.email}</span><button className="ghost sm" onClick={signOut}>Se déconnecter</button></div>
       </div>
       <IOSGuide />
       <div className="dash-title"><span className="eyebrow">Espace de travail</span><h1>Vos reviews<span>.</span></h1></div>

@@ -214,3 +214,47 @@ export async function exportMarkers(aid, version) {
   });
   return ['Marker Name\tDescription\tIn\tOut\tDuration\tMarker Type', ...rows].join('\n');
 }
+
+/* ───────── Club privé (comme Todo) : une carte par e-mail, 2 invitations par membre, illimité pour un admin ───────── */
+export const CLUB_MAX = 2;
+const normEmail = (e) => String(e || '').trim().toLowerCase();
+
+// à la première connexion d'un invité, sa carte passe en « membre »
+export async function activateCard(user) {
+  const ref = doc(db, 'access', normEmail(user.email));
+  try {
+    const s = await getDoc(ref);
+    if (s.exists() && !s.data().joined) await updateDoc(ref, { joined: true, uid: user.uid, name: user.displayName || '', joinedAt: serverTimestamp() });
+  } catch {}
+}
+// un admin peut lire la liste des admins (config/hosts), les autres non
+export async function isClubAdmin() {
+  try { return (await getDoc(doc(db, 'config', 'hosts'))).exists(); } catch { return false; }
+}
+export async function loadClub(uid, admin) {
+  const q = admin ? collection(db, 'access') : query(collection(db, 'access'), where('by', '==', uid));
+  const cards = (await getDocs(q)).docs.map((d) => ({ ...d.data(), createdAt: ms(d.data().createdAt) }))
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  let used = 0;
+  try { const s = await getDoc(doc(db, 'quota', uid)); used = s.exists() ? s.data().n : 0; } catch {}
+  return { cards, used };
+}
+// renvoie false si la personne est déjà membre ou invitée
+export async function clubInvite({ uid, name, admin, used }, raw) {
+  const email = normEmail(raw);
+  if (!/^[^@/ ]+@[^@/ ]+\.[^@/ ]+$/.test(email)) throw new Error('Adresse e-mail invalide.');
+  if (!admin && used >= CLUB_MAX) throw new Error(`Tu as déjà utilisé tes ${CLUB_MAX} invitations.`);
+  if ((await getDoc(doc(db, 'access', email))).exists()) return false;
+  const b = writeBatch(db);
+  b.set(doc(db, 'access', email), { email, by: uid, byName: name || '', joined: false, createdAt: serverTimestamp() });
+  if (!admin) b.set(doc(db, 'quota', uid), { n: used + 1, last: email });
+  await b.commit();
+  return true;
+}
+// annuler une invitation pas encore utilisée (rend la place) ; un admin retire n'importe quel membre
+export async function cancelClubInvite({ uid, admin, used }, email) {
+  const b = writeBatch(db);
+  b.delete(doc(db, 'access', email));
+  if (!admin) b.set(doc(db, 'quota', uid), { n: Math.max(0, used - 1), last: email });
+  await b.commit();
+}

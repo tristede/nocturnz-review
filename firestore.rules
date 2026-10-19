@@ -14,10 +14,14 @@ service cloud.firestore {
     function verified() {
       return request.auth != null && request.auth.token.email_verified == true;
     }
-    function isHost() {
-      return verified()
-        && request.auth.token.email.lower() in get(/databases/$(database)/documents/config/hosts).data.emails;
-    }
+    function myEmail() { return request.auth.token.email.lower(); }
+    function d(c, id) { return /databases/$(database)/documents/$(c)/$(id); }
+    // admins du club : liste config/hosts, modifiable seulement depuis la console
+    function isAdmin() { return verified() && myEmail() in get(d('config', 'hosts')).data.emails; }
+    // Club privé (comme Todo) : crée des reviews quiconque a une carte access/<email> ou est admin
+    function isHost() { return verified() && (exists(d('access', myEmail())) || isAdmin()); }
+    function quotaOf(uid) { return exists(d('quota', uid)) ? get(d('quota', uid)).data.n : 0; }
+    function quotaAfter(uid) { return existsAfter(d('quota', uid)) ? getAfter(d('quota', uid)).data.n : 0; }
     function owns(a) { return isHost() && a.owner == request.auth.uid; }
     function live(a) { return a.revoked != true && (a.expiresAt == null || a.expiresAt > request.time); }
     function invitedOk(a) {
@@ -39,9 +43,47 @@ service cloud.firestore {
       return d.get('dueDate', null) == null || (d.dueDate is string && d.dueDate.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'));
     }
 
-    // la liste des hôtes ne passe jamais par un client (gérée avec le script scripts/seed-hosts.mjs)
+    // la liste des admins ne s'écrit que depuis la console ; un admin peut la lire (c'est ainsi que l'appli le reconnaît)
     match /config/{doc} {
-      allow read, write: if false;
+      allow get: if doc == 'hosts' && verified() && myEmail() in resource.data.emails;
+      allow list, write: if false;
+    }
+
+    // Club privé : une carte par adresse e-mail ; by = qui a invité. 2 invitations par membre, illimité pour un admin.
+    match /access/{email} {
+      allow get: if isHost() || (verified() && email == myEmail());
+      allow list: if isAdmin() || (isHost() && resource.data.by == request.auth.uid);
+      allow create: if isHost()
+        && email == email.lower() && email.matches('^[^@/ ]+@[^@/ ]+[.][^@/ ]+$')
+        && request.resource.data.keys().hasOnly(['email', 'by', 'byName', 'joined', 'createdAt'])
+        && request.resource.data.email == email
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.joined == false
+        && (isAdmin() || (quotaAfter(request.auth.uid) == quotaOf(request.auth.uid) + 1 && quotaAfter(request.auth.uid) <= 2
+                          && getAfter(d('quota', request.auth.uid)).data.last == email));
+      // l'invité active sa carte à sa première connexion
+      allow update: if verified() && email == myEmail()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['joined', 'uid', 'name', 'joinedAt'])
+        && request.resource.data.joined == true && request.resource.data.uid == request.auth.uid;
+      // annuler une invitation pas encore utilisée (rend la place) ; un admin retire qui il veut
+      allow delete: if isAdmin()
+        || (isHost() && resource.data.by == request.auth.uid && resource.data.joined == false
+            && quotaAfter(request.auth.uid) == quotaOf(request.auth.uid) - 1 && getAfter(d('quota', request.auth.uid)).data.last == email);
+    }
+
+    match /quota/{uid} {
+      function bumpOk(q) {
+        let e = q.last;
+        return (q.n == quotaOf(uid) + 1 && q.n <= 2
+                 && !exists(d('access', e)) && existsAfter(d('access', e)) && getAfter(d('access', e)).data.by == request.auth.uid)
+          || (q.n == quotaOf(uid) - 1 && q.n >= 0
+                 && exists(d('access', e)) && !existsAfter(d('access', e))
+                 && get(d('access', e)).data.by == request.auth.uid && get(d('access', e)).data.joined == false);
+      }
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if isHost() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['n', 'last']) && request.resource.data.last is string
+        && bumpOk(request.resource.data);
     }
 
     // hébergement des vidéos (stockage compatible S3 propre à chaque hôte) : clés lisibles par cet hôte seul

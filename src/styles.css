@@ -749,3 +749,17 @@ button.icon-btn.on { color: #fff; border-color: rgba(142, 123, 255, .55); backgr
 .ios-step { flex: none; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: rgba(142, 123, 255, .22); color: #fff; }
 .ios-key { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 6px; font-weight: 500; background: rgba(255, 255, 255, .08); border: 1px solid var(--line2); }
 .ios-guide > button { width: 100%; }
+
+/* club privé : panneau d'invitation */
+.club { position: relative; display: inline-flex; }
+.club-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: min(360px, calc(100vw - 24px)); display: grid; gap: 10px; padding: 14px; border-radius: 12px; text-align: left; background: rgba(22, 18, 36, .97); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border: 1px solid var(--line2); box-shadow: 0 20px 50px -20px #000; }
+.club-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.club-head .mut, .club-intro { font-size: 12px; }
+.club-intro { margin: 0; }
+.club-sent { display: grid; gap: 8px; padding: 10px; border-radius: 8px; font-size: 12.5px; background: rgba(88, 207, 160, .08); border: 1px solid rgba(88, 207, 160, .3); }
+.club-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 260px; overflow-y: auto; }
+.club-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; font-size: 12.5px; }
+.club-mail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.club-mail small { color: var(--dim); }
+.club-state { font-size: 11px; padding: 1px 7px; border-radius: 6px; color: var(--gold); background: rgba(229, 189, 120, .12); }
+.club-state.ok { color: var(--ok); background: rgba(88, 207, 160, .12); }

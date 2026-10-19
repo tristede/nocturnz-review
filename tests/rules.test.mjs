@@ -1,7 +1,7 @@
 // Tests des règles Firestore sur l'émulateur : npm run test:rules
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'node:fs';
-import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where, serverTimestamp, Timestamp, writeBatch } from 'firebase/firestore';
 
 const [host, port] = (process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080').split(':');
 const env = await initializeTestEnvironment({
@@ -57,7 +57,7 @@ await check('un hôte règle fps et onde', assertSucceeds(updateDoc(doc(hostDb, 
 await check('un hôte lit une review désactivée ou expirée (aperçu)', assertSucceeds(Promise.all([getDoc(doc(hostDb, 'assets/REV')), getDoc(doc(hostDb, 'assets/EXP'))])));
 await check('un autre compte ne peut pas ouvrir une review désactivée qui n\'est pas la sienne', assertFails(getDoc(doc(otherHostDb, 'assets/REV'))));
 await check('un lien secret reste lisible par tout compte connecté qui le connaît (comme pour un invité)', assertSucceeds(getDoc(doc(otherHostDb, 'assets/LINK'))));
-await check('personne ne lit config/hosts', assertFails(getDoc(doc(hostDb, 'config/hosts'))));
+await check('un compte hors admins ne lit pas config/hosts', assertFails(getDoc(doc(otherHostDb, 'config/hosts'))));
 
 console.log('Énumération');
 await check('un invité ne peut pas lister les reviews', assertFails(getDocs(collection(guestDb, 'assets'))));
@@ -153,6 +153,39 @@ await check('un hôte n\'écrit pas l\'hébergement d\'un autre', assertFails(se
 await check('un compte non hôte n\'enregistre pas d\'hébergement', assertFails(setDoc(doc(otherHostDb, 'hosting/u2'), hosting())));
 await check('adresse non https refusée', assertFails(setDoc(doc(hostDb, 'hosting/hostUid'), hosting({ endpoint: 'http://x' }))));
 await check('champ en trop refusé', assertFails(setDoc(doc(hostDb, 'hosting/hostUid'), hosting({ extra: 1 }))));
+
+console.log('Club privé');
+const card = (email, by, over = {}) => ({ email, by, byName: 'X', joined: false, createdAt: serverTimestamp(), ...over });
+const clubInvite = (db, uid, email, n) => { const b = writeBatch(db); b.set(doc(db, 'access/' + email), card(email, uid)); b.set(doc(db, 'quota/' + uid), { n, last: email }); return b.commit(); };
+const memberDb = user('memUid', 'mem@x.test');
+const outsiderDb = user('outUid', 'out@x.test');
+await env.withSecurityRulesDisabled(async (ctx) => { await setDoc(doc(ctx.firestore(), 'access/mem@x.test'), { email: 'mem@x.test', by: 'hostUid', byName: 'Admin', joined: true }); });
+await check('un admin lit la liste des admins (c\'est ainsi qu\'il est reconnu)', assertSucceeds(getDoc(doc(hostDb, 'config/hosts'))));
+await check('un membre ne lit pas la liste des admins', assertFails(getDoc(doc(memberDb, 'config/hosts'))));
+await check('un membre du club crée une review', assertSucceeds(setDoc(doc(memberDb, 'assets/MEM1'), asset({ owner: 'memUid' }))));
+await check('un non-membre ne crée pas de review', assertFails(setDoc(doc(outsiderDb, 'assets/OUT1'), asset({ owner: 'outUid' }))));
+await check('un non-membre lit sa propre carte (absente)', assertSucceeds(getDoc(doc(outsiderDb, 'access/out@x.test'))));
+await check('un non-membre ne lit pas la carte des autres', assertFails(getDoc(doc(outsiderDb, 'access/mem@x.test'))));
+await check('un non-membre ne s\'invite pas lui-même', assertFails(clubInvite(outsiderDb, 'outUid', 'out@x.test', 1)));
+await check('invitation 1/2', assertSucceeds(clubInvite(memberDb, 'memUid', 'k1@x.test', 1)));
+await check('invitation sans compteur refusée', assertFails(setDoc(doc(memberDb, 'access/k9@x.test'), card('k9@x.test', 'memUid'))));
+await check('compteur qui saute refusé', assertFails(clubInvite(memberDb, 'memUid', 'k2@x.test', 3)));
+await check('invitation 2/2', assertSucceeds(clubInvite(memberDb, 'memUid', 'k2@x.test', 2)));
+await check('3e invitation refusée', assertFails(clubInvite(memberDb, 'memUid', 'k3@x.test', 3)));
+await check('remettre le compteur à 0 à la main refusé', assertFails(setDoc(doc(memberDb, 'quota/memUid'), { n: 0, last: 'x' })));
+await check('annuler une invitation pas utilisée rend la place', (() => { const b = writeBatch(memberDb); b.delete(doc(memberDb, 'access/k2@x.test')); b.set(doc(memberDb, 'quota/memUid'), { n: 1, last: 'k2@x.test' }); return assertSucceeds(b.commit()); })());
+await check('la place rendue resservira', assertSucceeds(clubInvite(memberDb, 'memUid', 'k3@x.test', 2)));
+await check('pas d\'invitation au nom d\'un autre', assertFails(clubInvite(otherHostDb, 'memUid', 'k4@x.test', 3)));
+await check('l\'invité active sa carte', assertSucceeds(updateDoc(doc(user('k1', 'k1@x.test'), 'access/k1@x.test'), { joined: true, uid: 'k1', name: 'K' })));
+await check('l\'invité actif crée une review', assertSucceeds(setDoc(doc(user('k1', 'k1@x.test'), 'assets/K1'), asset({ owner: 'k1' }))));
+await check('carte activée non annulable par l\'inviteur', (() => { const b = writeBatch(memberDb); b.delete(doc(memberDb, 'access/k1@x.test')); b.set(doc(memberDb, 'quota/memUid'), { n: 1, last: 'k1@x.test' }); return assertFails(b.commit()); })());
+await check('un admin invite sans limite ni compteur', Promise.all(['a1@x.test', 'a2@x.test', 'a3@x.test'].map((e) => setDoc(doc(hostDb, 'access/' + e), card(e, 'hostUid')))));
+await check('un membre ne crée pas de carte déjà active', assertFails(setDoc(doc(memberDb, 'access/zz@x.test'), card('zz@x.test', 'memUid', { joined: true }))));
+await check('un admin liste tout le club', assertSucceeds(getDocs(collection(hostDb, 'access'))));
+await check('un membre liste ses invités', assertSucceeds(getDocs(query(collection(memberDb, 'access'), where('by', '==', 'memUid')))));
+await check('un membre ne liste pas tout le club', assertFails(getDocs(collection(memberDb, 'access'))));
+await check('un admin retire un membre', assertSucceeds(deleteDoc(doc(hostDb, 'access/k3@x.test'))));
+await check('un membre ne retire personne', assertFails(deleteDoc(doc(memberDb, 'access/a1@x.test'))));
 
 console.log('Gestion du partage');
 await check('l\'hôte désactive puis réactive', assertSucceeds(updateDoc(doc(hostDb, 'assets/NOEXP'), { revoked: true })));

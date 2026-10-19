@@ -11,7 +11,7 @@ export default function ReviewPage() {
   const { token } = useParams();
   const route = useLocation();
   const [sp] = useSearchParams();
-  const { user, ready, signIn, signOut } = useAuth();
+  const { user, ready, signIn, signOut, switchAccount } = useAuth();
   const [state, setState] = useState({ status: 'loading' });
   const loaded = useRef(false);
   const v = sp.get('v');
@@ -45,7 +45,7 @@ export default function ReviewPage() {
         text="Cette review est désactivée, expirée, ou réservée à des invités. Si on t’a invité, connecte-toi avec l’adresse Gmail invitée."
       >
         {user ? (
-          <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={signOut}>Changer de compte</button></p>
+          <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={() => switchAccount().catch(() => {})}>Changer de compte</button></p>
         ) : (
           <button onClick={() => signIn().catch(() => {})}>Se connecter avec Google</button>
         )}

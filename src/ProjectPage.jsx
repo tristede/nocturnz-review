@@ -10,7 +10,7 @@ import ProjectDeadline, { DeadlineBadge } from './ProjectDeadline';
 export default function ProjectPage() {
   const { pid } = useParams();
   const nav = useNavigate();
-  const { user, ready, signIn, signOut } = useAuth();
+  const { user, ready, signIn, signOut, switchAccount } = useAuth();
   const [state, setState] = useState({ status: 'loading' });
   const [msg, setMsg] = useState('');
   const [renaming, setRenaming] = useState(false);
@@ -37,7 +37,7 @@ export default function ProjectPage() {
     return (
       <Notice title="Accès impossible" text="Ce projet est désactivé, expiré, ou réservé à des invités. Si on t’a invité, connecte-toi avec l’adresse Gmail invitée.">
         {user ? (
-          <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={signOut}>Changer de compte</button></p>
+          <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={() => switchAccount().catch(() => {})}>Changer de compte</button></p>
         ) : (
           <button onClick={() => signIn().catch(() => {})}>Se connecter avec Google</button>
         )}
