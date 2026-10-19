@@ -303,7 +303,7 @@ export default function Dashboard() {
   if (!ready) return <Notice title="Chargement…" />;
   if (!user) {
     return (
-      <Notice title="Review" text="Club privé, sur invitation uniquement. Connecte-toi avec l’adresse Gmail qui a été invitée.">
+      <Notice title="Review">
         <div className="row" style={{ flexWrap: 'wrap' }}>
           <button onClick={() => signIn().catch((e) => setErr(e.message))}>Me connecter</button>
           {usingEmulators && <button className="ghost" onClick={() => window.__devSignIn('host@example.test').catch((e) => setErr(e.message))}>Entrer en aperçu local</button>}
