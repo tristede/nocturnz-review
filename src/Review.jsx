@@ -434,7 +434,9 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [draft, setDraft] = useState(null);
   const [muted, setMuted] = useState(false);
   const [dlUrl, setDlUrl] = useState(download);
-  const [full, setFull] = useState(false);   // mobile : plein écran (paysage), outils par-dessus l'image
+  // mobile en paysage : l'image occupe tout l'écran, les outils passent par-dessus (automatique en tournant le téléphone)
+  const landscape = useMedia('(orientation: landscape)');
+  const [nativeFull, setNativeFull] = useState(false); // vrai plein écran du navigateur (Android ; impossible sur iPhone)
   const [ui, setUi] = useState(true);        // plein écran : outils affichés (un toucher sur l'image les montre / cache)
   const rootRef = useRef(null); // lien de téléchargement de la version (Drive…)
 
@@ -858,19 +860,15 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   };
   markerRef.current = addMarker;
 
-  // plein écran : API Fullscreen + paysage quand le navigateur le permet (sinon l'écran est simplement occupé en entier,
-  // l'iPhone n'autorisant le plein écran que pour son propre lecteur)
-  const enterFull = () => {
-    setFull(true); setUi(true);
-    rootRef.current?.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
-  };
-  const exitFull = () => {
-    setFull(false); setUi(true);
-    try { screen.orientation?.unlock?.(); } catch {}
+  const full = mobile && landscape;
+  const canNativeFull = typeof document !== 'undefined' && !!document.fullscreenEnabled;
+  const toggleNativeFull = () => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else rootRef.current?.requestFullscreen?.().catch(() => {});
   };
+  useEffect(() => { setUi(true); }, [full]);
   useEffect(() => {
-    const f = () => { if (!document.fullscreenElement) setFull(false); };
+    const f = () => setNativeFull(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', f);
     return () => document.removeEventListener('fullscreenchange', f);
   }, []);
@@ -1323,7 +1321,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         <div className="m-ctrl">
           <span className="m-left">
             <button className="m-ic" onClick={toggleMute} aria-label={muted ? 'Remettre le son' : 'Couper le son'}><MIcon d={muted ? M_ICONS.mute : M_ICONS.sound} /></button>
-            <button className="m-ic" onClick={full ? exitFull : enterFull} aria-label={full ? 'Quitter le plein écran' : 'Plein écran'}><MIcon d={full ? M_ICONS.shrink : M_ICONS.expand} /></button>
+            {full && canNativeFull && <button className="m-ic" onClick={toggleNativeFull} aria-label={nativeFull ? 'Quitter le plein écran' : 'Plein écran'}><MIcon d={nativeFull ? M_ICONS.shrink : M_ICONS.expand} /></button>}
           </span>
           <button className="m-ic m-playbtn" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}><MIcon d={playing ? M_ICONS.pause : M_ICONS.play} /></button>
           <span className="m-undo">
