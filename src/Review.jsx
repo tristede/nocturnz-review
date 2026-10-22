@@ -1595,16 +1595,15 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           </div>
         )}
 
-        {((pro && isYt) || waving || peaksError || (admin && !peaks && (isYt || needLocalWave)) || (admin && peaks && !peaks.max && (isYt || source !== 'file' || fileBytes > AUTO_WAVE_MAX)) || (admin && fileSize > 1.5e9)) && (
+        {((pro && isYt) || waving || peaksError || (admin && !peaks && (isYt || needLocalWave)) || (admin && fileSize > 1.5e9)) && (
           <div className="notes">
             {isYt && pro && <span>Vidéo YouTube : précision à l’image non garantie{peaks ? '' : ', pas d’onde sonore'}.{admin ? ' Règle les images/s dans « Avancé » du tableau de bord.' : ''}</span>}
             {admin && fileSize > 1.5e9 && (
               <span>Fichier de {(fileSize / 1e9).toFixed(1).replace('.', ',')} Go : depuis Drive, la lecture et les sauts dans la timeline peuvent être lents, et Google bloque parfois temporairement. Pour les retours, partage plutôt une version allégée (1080p).</span>
             )}
-            {admin && !waving && ((!peaks && (isYt || needLocalWave)) || (peaks && !peaks.max && (isYt || source !== 'file' || fileBytes > AUTO_WAVE_MAX))) && (
+            {admin && !peaks && !waving && (isYt || needLocalWave) && (
               <div className="row" style={{ flexWrap: 'wrap' }}>
-                {peaks && <span>L’indicateur de niveau est relatif pour cette version (onde calculée avant la mesure du niveau réel).</span>}
-                <button className="ghost sm" onClick={(e) => e.currentTarget.nextSibling.click()}>{peaks ? 'Mesurer le niveau réel' : 'Ajouter l’onde sonore'}</button>
+                <button className="ghost sm" onClick={(e) => e.currentTarget.nextSibling.click()}>Ajouter l’onde sonore</button>
                 <input type="file" accept="video/*,audio/*" hidden onChange={peaksFromFile} />
                 <span>Choisis le fichier vidéo sur ton ordinateur : seul le son est lu, rien n’est envoyé.</span>
               </div>
