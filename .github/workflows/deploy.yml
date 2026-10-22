@@ -1,0 +1,31 @@
+# Déploie Review sur Firebase Hosting à chaque push sur main (ou à la main depuis l'onglet Actions).
+# Secret requis : FIREBASE_SERVICE_ACCOUNT (le JSON du compte de service, Firebase → Paramètres → Comptes de service).
+name: Déployer Review
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      HAS_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+    steps:
+      - if: env.HAS_KEY != 'true'
+        run: echo "::warning::Secret FIREBASE_SERVICE_ACCOUNT absent, déploiement ignoré."
+      - if: env.HAS_KEY == 'true'
+        uses: actions/checkout@v4
+      - if: env.HAS_KEY == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # le package-lock actuel fait échouer npm ci (« Invalid Version »)
+      - if: env.HAS_KEY == 'true'
+        run: npm install --no-package-lock --no-audit --no-fund && npm run build
+      - if: env.HAS_KEY == 'true'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: nocturnz-review
+          channelId: live
