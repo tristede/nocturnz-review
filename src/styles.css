@@ -661,7 +661,8 @@ body { background: radial-gradient(ellipse 110% 38% at 50% 0%, rgba(75, 48, 119,
 .review.mobile { --m-head: #f5d04a; display: flex; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; grid-template-columns: none; background: #000; }
 .m-top { flex: none; display: flex; align-items: center; gap: 10px; padding: max(10px, env(safe-area-inset-top)) 14px 8px; min-width: 0; }
 .m-top .brand.m-brand { flex: none; margin: 0; font-size: 15px; }
-.m-top .brand.m-brand b { display: none; }
+.m-top .brand.m-brand b { font-size: 10.5px; letter-spacing: .02em; white-space: nowrap; }
+.m-top .brand.m-brand { gap: 5px; }
 a.m-back { flex: 0 1 auto; min-width: 0; max-width: 30%; height: 28px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 14px; background: rgba(255, 255, 255, .08); color: #e8e6f0; font-size: 12.5px; font-weight: 500; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-title { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .m-title b { min-width: 0; font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -680,7 +681,7 @@ button.m-banner { height: auto; margin: 0 12px 8px; padding: 6px 10px; font-size
 .review.mobile .monitor-toolbar { display: none; }
 .review.mobile .monitor-shell { width: 100% !important; display: flex; flex-direction: column; }
 .review.mobile .monitor-viewport.vwrap { max-height: none; border: 0; border-radius: 14px; overflow: hidden; box-shadow: none; }
-.review.mobile .monitor-draw-popover { position: absolute; left: 24px; right: 24px; top: 12px; bottom: auto; z-index: 6; transform: none; width: auto; margin: 0; }
+.review.mobile .monitor-draw-popover { display: none; position: absolute; left: 24px; right: 24px; top: 12px; bottom: auto; z-index: 6; transform: none; width: auto; margin: 0; }
 .review.mobile .monitor-draw-popover .seg-ctl { flex-wrap: wrap; }
 .review.mobile > .notes { flex: none; margin: 6px 16px 0; }
 
@@ -692,20 +693,17 @@ button.m-ic:disabled { color: rgba(255, 255, 255, .28); opacity: 1; }
 .m-undo { justify-self: end; display: flex; gap: 2px; }
 
 /* timeline : règle, pellicule, piste son ; la tête reste au centre */
-.m-track { position: relative; flex: none; height: 168px; padding-top: 34px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+.m-track { position: relative; flex: none; height: 118px; padding-top: 34px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
 .m-ruler { position: absolute; left: 0; right: 0; top: 0; height: 34px; pointer-events: none; }
 .m-ruler span { position: absolute; top: 9px; transform: translateX(-50%); font-size: 13px; color: rgba(255, 255, 255, .62); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .m-clock { position: absolute; left: 0; top: 0; z-index: 4; height: 34px; padding: 0 22px 0 14px; display: flex; align-items: center; font-size: 13.5px; color: rgba(255, 255, 255, .62); font-variant-numeric: tabular-nums; background: linear-gradient(90deg, #000 78%, transparent); pointer-events: none; }
 .m-clock b { color: #fff; font-weight: 500; }
 .m-lane { position: relative; }
-.m-clip { height: 72px; }
-.m-film { position: absolute; inset: 0; width: 100%; height: 100%; }
-.m-dur { position: absolute; bottom: 6px; z-index: 2; font-size: 13px; font-weight: 600; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .8); pointer-events: none; font-variant-numeric: tabular-nums; }
-.m-clip .mk { top: -6px; bottom: -6px; z-index: 2; }
-.m-clip .mk::before { opacity: .7; }
-.m-clip .mk::after { top: -1px; width: 7px; left: 1px; height: 12px; }
-.m-clip .seg { top: auto; bottom: 0; height: 4px; z-index: 2; border-radius: 3px 3px 0 0; }
-.m-sound { height: 46px; margin-top: 8px; }
+.m-sound { height: 72px; }
+.m-sound .mk { top: -4px; bottom: 0; z-index: 2; }
+.m-sound .mk::before { opacity: .7; }
+.m-sound .mk::after { top: -1px; width: 7px; left: 1px; height: 12px; }
+.m-sound .seg { top: auto; bottom: 0; height: 4px; z-index: 2; border-radius: 3px 3px 0 0; }
 .m-sound-bg { position: absolute; top: 0; bottom: 0; border-radius: 8px; background: #1c1b22; }
 .m-sound .wave { position: absolute; left: 0; right: 0; top: 4px; height: calc(100% - 8px); width: 100%; }
 .m-head { position: absolute; left: 50%; top: 32px; bottom: 6px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--m-head); pointer-events: none; z-index: 3; }
@@ -798,3 +796,18 @@ a.back-btn:hover { color: #fff; background: rgba(255, 255, 255, .075); }
 .alpha-note { display: grid; gap: 8px; margin: 0 0 22px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line2); background: rgba(134, 89, 201, .08); font-size: 14px; line-height: 1.5; }
 .alpha-note p { margin: 0; }
 .alpha-tag { width: fit-content; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #fff; background: var(--acc); }
+
+/* mobile : outils de dessin sous la vidéo (jamais par-dessus l'image) */
+.m-drawbar { flex: none; margin: 8px 12px 0; }
+.m-drawbar .draw-options { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }
+.m-drawbar .seg-ctl { flex: 1 1 auto; min-width: 0; overflow-x: auto; }
+.m-drawbar .seg-ctl button { height: 28px; padding: 0 9px; font-size: 12px; }
+.m-drawbar .sw { flex: none; display: flex; gap: 5px; }
+.m-drawbar .sw button { width: 20px; height: 20px; }
+.m-pinhint { font-size: 12.5px; color: var(--mut); text-align: center; }
+.m-drawbar .seg-ctl { flex-wrap: nowrap; }
+.m-drawbar .seg-ctl button { padding: 0 7px; font-size: 11.5px; white-space: nowrap; }
+.m-drawbar .sw { gap: 4px; }
+.m-drawbar .sw button { width: 18px; height: 18px; border-radius: 5px; }
+/* petit écran : logo complet + retour + version + avis ; le titre laisse sa place */
+@media (max-width: 430px) { .m-title b { display: none; } }

@@ -7,8 +7,7 @@ import { captureAnnotatedFrame } from './captureFrame';
 import DrawingToolbar from './DrawingToolbar';
 import * as data from './data';
 import { notifyHost } from './push';
-import { videoUrl, driveMeta, thumbUrl } from './links';
-import { useFilmstrip } from './filmstrip';
+import { videoUrl, driveMeta } from './links';
 import { peaksFromLocalMp4, peaksFromBuffer, encodePeaks, b64ToBytes } from './audioPeaks';
 import Brand, { BackButton } from './Brand';
 import { COLORS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause } from './draw';
@@ -170,49 +169,11 @@ const M_ICONS = {
   pause: <path d="M8 5v14M16 5v14" />,
 };
 
-// pellicule : vignettes collées à la timeline (une vignette = une image prise à son début)
-function FilmLane({ frames, ratio, dur, vs, span }) {
-  const ref = useRef(null);
-  const [size, setSize] = useState({ w: 0, h: 0 });
-  useEffect(() => {
-    const ro = new ResizeObserver(() => setSize({ w: ref.current.clientWidth, h: ref.current.clientHeight }));
-    ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, []);
-  useEffect(() => {
-    const cv = ref.current, { w, h } = size;
-    if (!w || !h || !dur) return;
-    const dpr = window.devicePixelRatio || 1;
-    cv.width = w * dpr; cv.height = h * dpr;
-    const g = cv.getContext('2d');
-    g.scale(dpr, dpr);
-    const x0 = ((0 - vs) / span) * w, x1 = ((dur - vs) / span) * w;
-    const left = Math.max(x0, -12), right = Math.min(x1, w + 12);
-    if (right <= left) return;
-    g.save();
-    g.beginPath(); g.roundRect(x0, 0, x1 - x0, h, 8); g.clip();
-    g.fillStyle = '#1d1a2a'; g.fillRect(left, 0, right - left, h);
-    const tw = h * clamp(ratio, 0.5, 1.78), tt = (tw / w) * span; // largeur d'une vignette, en pixels puis en secondes
-    for (let k = Math.max(0, Math.floor(vs / tt)); k * tt < Math.min(dur, vs + span); k++) {
-      const t = k * tt, x = ((t - vs) / span) * w;
-      let f = null;
-      for (const fr of frames) if (fr.t <= t + tt / 2) f = fr;
-      f ??= frames[0];
-      if (!f) continue;
-      const iw = f.img.naturalWidth || f.img.width, ih = f.img.naturalHeight || f.img.height;
-      const s = Math.max(tw / iw, h / ih), sw = tw / s, sh = h / s; // recadrage « cover »
-      try { g.drawImage(f.img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, x, 0, tw + 0.5, h); } catch {}
-    }
-    g.restore();
-  }, [frames, ratio, dur, vs, span, size]);
-  return <canvas ref={ref} className="m-film" />;
-}
-
 const rulerLabel = (t) => (t < 60 ? `${t}s` : `${Math.floor(t / 60)}:${pad(Math.round(t % 60))}`);
 
 // Timeline mobile façon CapCut : la tête reste au centre, la timeline défile sous le doigt.
 // Glisser lentement = image par image ; deux doigts ou double toucher = zoom.
-function MobileTrack({ dur, now, F, clock, durLabel, film, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick, onAdd, pending }) {
+function MobileTrack({ dur, now, F, clock, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick, onAdd, pending }) {
   const el = useRef(null);
   const [w, setW] = useState(360);
   const [pps, setPps] = useState(64);              // pixels par seconde
@@ -220,7 +181,12 @@ function MobileTrack({ dur, now, F, clock, durLabel, film, peaks, flatPeaks, wav
   useEffect(() => {
     const ro = new ResizeObserver(() => setW(el.current?.clientWidth || 360));
     ro.observe(el.current);
-    return () => ro.disconnect();
+    // iPhone : sans ça, Safari peut reprendre le geste (défilement, retour arrière) et couper le glissement
+    const stop = (e) => e.preventDefault();
+    el.current.addEventListener('touchstart', stop, { passive: false });
+    el.current.addEventListener('touchmove', stop, { passive: false });
+    const node = el.current;
+    return () => { ro.disconnect(); node.removeEventListener('touchstart', stop); node.removeEventListener('touchmove', stop); };
   }, []);
   const span = w / pps, vs = now - span / 2;
   const xp = (t) => `${((t - vs) / span) * 100}%`;
@@ -232,6 +198,9 @@ function MobileTrack({ dur, now, F, clock, durLabel, film, peaks, flatPeaks, wav
   const down = (e) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
     const st = g.current;
+    // premier doigt d'un nouveau geste : on oublie les doigts dont Safari n'a pas signalé la fin
+    // (sinon un seul doigt est pris pour un pincement et la timeline zoome au lieu de défiler)
+    if (e.isPrimary) { st.pts.clear(); st.pinch = null; }
     st.pts.set(e.pointerId, e.clientX);
     if (st.pts.size === 2) { // pincement : zoom de la timeline
       const [a, b] = [...st.pts.values()];
@@ -280,17 +249,13 @@ function MobileTrack({ dur, now, F, clock, durLabel, film, peaks, flatPeaks, wav
         {ticks.map((t) => <span key={t} style={{ left: xp(t) }}>{rulerLabel(t)}</span>)}
       </div>
       <div className="m-clock">{clock}</div>
-      <div className="m-lane m-clip">
-        {dur > 0 && <FilmLane frames={film.frames} ratio={film.ratio} dur={dur} vs={vs} span={span} />}
-        {dur > 0 && <span className="m-dur" style={{ left: `max(6px, calc(${xp(0)} + 8px))` }}>{durLabel}</span>}
+      <div className="m-lane m-sound">
+        {dur > 0 && <div className="m-sound-bg" style={clipStyle} />}
+        {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
         {dur > 0 && tops.map((c) => c.t_end
           ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
               onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />
           : <div key={c.id} className={`mk ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t) }} onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />)}
-      </div>
-      <div className="m-lane m-sound">
-        {dur > 0 && <div className="m-sound-bg" style={clipStyle} />}
-        {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
       </div>
       <div className="m-head" />
       <button className="m-add" onPointerDown={(e) => e.stopPropagation()} onClick={onAdd}
@@ -1013,8 +978,6 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const draftLabel = endF != null ? `${label(stampF / F)} → ${label(endF / F)}` : label(stampF / F);
 
   const flatPeaks = useMemo(() => ({ l: new Uint8Array(400).fill(16), r: null }), []); // onde plate de remplacement
-  // pellicule de la timeline mobile (seulement sur mobile : elle relit la vidéo en arrière-plan)
-  const film = useFilmstrip(!mobile || source === 'drive' ? {} : isYt ? { poster: thumbUrl('youtube', videoId) } : { src: videoUrl(source, videoId, mediaUrl), dur });
 
   // blocs partagés par la mise en page ordinateur et la mise en page mobile
   const monitorView = (
@@ -1223,6 +1186,10 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         </header>
         {currentN !== latestN && <button className="m-banner" onClick={() => goVersion(latestN)}>Version récente : v{latestN} · voir</button>}
         {monitorView}
+        {toolsOpen && tool !== 'pin' && (
+          <div className="m-drawbar"><DrawingToolbar tool={tool} onTool={pickTool} color={color} onColor={setColor} only={['pen', 'arrow', 'circle', 'rect']} /></div>
+        )}
+        {tool === 'pin' && <div className="m-drawbar m-pinhint">Touche l’image pour placer un repère</div>}
         {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
         <div className="m-ctrl">
           <button className="m-ic" onClick={toggleMute} aria-label={muted ? 'Remettre le son' : 'Couper le son'}><MIcon d={muted ? M_ICONS.mute : M_ICONS.sound} /></button>
@@ -1232,13 +1199,13 @@ export default function Review({ aid, title, admin, back = null, deadline = null
             <button className="m-ic" onClick={redoDraw} disabled={!redoStack.length} aria-label="Refaire le dessin"><MIcon d={M_ICONS.redo} /></button>
           </span>
         </div>
-        <MobileTrack dur={dur} now={now} F={F} film={film} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
-          clock={<><b>{label(now)}</b>/{label(dur || 0)}</>} durLabel={dur < 60 ? `${(Math.round(dur * 10) / 10).toString().replace('.', ',')}s` : label(dur)}
+        <MobileTrack dur={dur} now={now} F={F} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
+          clock={<><b>{label(now)}</b>/{label(dur || 0)}</>}
           tops={tops} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
           onPick={(c) => { setSel(c.id); seekT(c.t); }} onAdd={() => openSheet('compose')} pending={pending} />
         <nav className="m-tools" aria-label="Outils">
           <button aria-label="Dessiner" title="Dessiner" className={toolsOpen && tool !== 'pin' ? 'on' : ''} onClick={() => { if (toolsOpen && tool !== 'pin') { setToolsOpen(false); setTool(null); } else { vid.current?.pause(); setToolsOpen(true); setTool(tool && tool !== 'pin' ? tool : 'pen'); } }}><MIcon d={M_ICONS.pen} /></button>
-          <button aria-label="Repère" title="Repère" className={tool === 'pin' ? 'on' : ''} onClick={() => { vid.current?.pause(); setToolsOpen(true); setTool(tool === 'pin' ? null : 'pin'); }}><MIcon d={M_ICONS.pin} /></button>
+          <button aria-label="Repère" title="Repère" className={tool === 'pin' ? 'on' : ''} onClick={() => { vid.current?.pause(); setToolsOpen(false); setTool(tool === 'pin' ? null : 'pin'); }}><MIcon d={M_ICONS.pin} /></button>
           <button className="m-history" aria-label="Commentaires" title="Commentaires" onClick={() => openSheet('list')}>
             <MIcon d={M_ICONS.chat} />{tops.length ? <b>{tops.length}</b> : null}
           </button>
