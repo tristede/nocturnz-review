@@ -816,3 +816,19 @@ a.back-btn:hover { color: #fff; background: rgba(255, 255, 255, .075); }
 .m-ruler span::after { content: ''; position: absolute; left: 50%; top: 19px; width: 1px; height: 9px; background: rgba(255, 255, 255, .55); }
 .m-ruler .m-minor { position: absolute; top: 25px; width: 1px; height: 4px; background: rgba(255, 255, 255, .28); }
 .m-clock small { font-size: 11px; color: rgba(255, 255, 255, .7); font-weight: 500; }
+
+/* repères façon Premiere : écusson numéroté en haut + trait, bande colorée pour une plage */
+.pm { --pm: #a37ee6; position: absolute; top: 0; bottom: 0; width: 18px; margin-left: -9px; z-index: 4; cursor: pointer; touch-action: none; }
+.pm::before { content: ''; position: absolute; left: 8.5px; top: 14px; bottom: 0; width: 1px; background: var(--pm); opacity: .75; pointer-events: none; }
+.pm b { position: absolute; left: 1px; top: 0; width: 16px; height: 17px; display: grid; place-items: start center; padding-top: 1px; font-size: 9.5px; font-weight: 700; line-height: 12px; color: #fff; background: var(--pm); clip-path: polygon(0 0, 100% 0, 100% 62%, 50% 100%, 0 62%); font-variant-numeric: tabular-nums; }
+.pm.range { width: auto; min-width: 18px; margin-left: 0; }
+.pm.range::before { left: 0; }
+.pm.range b { left: -8px; }
+.pm.range i { position: absolute; left: 0; right: 0; top: 0; height: 12px; border-radius: 0 3px 3px 0; background: var(--pm); opacity: .35; pointer-events: none; }
+.pm.done { --pm: var(--ok); }
+.pm.sel b { box-shadow: none; background: #fff; color: #000; }
+.pm.sel { --pm-line: #fff; }
+.pm.sel::before { background: #fff; opacity: 1; }
+/* mobile : les repères occupent le haut de la piste son, sous la règle */
+.m-marks { position: absolute; left: 0; right: 0; top: 30px; bottom: 6px; pointer-events: none; }
+.m-marks .pm { pointer-events: auto; }

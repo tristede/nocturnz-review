@@ -157,7 +157,7 @@ function useMedia(q) {
 const MIcon = ({ d }) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
 const M_ICONS = {
   pen: <path d="m4 16 12-12 4 4L8 20H4zM13 7l4 4" />,
-  pin: <><path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z" /><circle cx="12" cy="10" r="2.2" /></>,
+  marker: <path d="M6 4h12v10l-6 6-6-6z" />,
   camera: <><path d="M3 7h4l2-3h6l2 3h4v13H3z" /><circle cx="12" cy="13" r="3.6" /></>,
   back: <path d="M15 5 8 12l7 7" />,
   down: <path d="m5 9 7 7 7-7" />,
@@ -171,6 +171,16 @@ const M_ICONS = {
 };
 
 // libellé d'une graduation : « 2s », « 2,4s » sous la seconde, « 1:05 » au-delà d'une minute
+// repère façon Premiere : écusson numéroté + trait sur toute la hauteur ; une plage = bande colorée
+function Marker({ c, n, left, width = null, sel, onDown, title }) {
+  return (
+    <div className={`pm ${c.resolved ? 'done' : ''} ${sel ? 'sel' : ''} ${width ? 'range' : ''}`} style={width ? { left, width } : { left }}
+      title={title} onPointerDown={onDown}>
+      {width && <i />}<b>{n}</b>
+    </div>
+  );
+}
+
 const rulerLabel = (t, step) => {
   if (t >= 60 && step >= 1) return `${Math.floor(t / 60)}:${pad(Math.round(t % 60))}`;
   const digits = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
@@ -179,7 +189,7 @@ const rulerLabel = (t, step) => {
 
 // Timeline mobile façon CapCut : la tête reste au centre, la timeline défile sous le doigt.
 // Glisser lentement = image par image ; deux doigts ou double toucher = zoom.
-function MobileTrack({ dur, now, F, clock, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick, onAdd, pending }) {
+function MobileTrack({ dur, now, F, clock, numberOf, sel, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick, onAdd, pending }) {
   const el = useRef(null);
   const [w, setW] = useState(360);
   const [pps, setPps] = useState(64);              // pixels par seconde
@@ -270,12 +280,12 @@ function MobileTrack({ dur, now, F, clock, peaks, flatPeaks, waveStyle, waveTint
       <div className="m-lane m-sound">
         {dur > 0 && <div className="m-sound-bg" style={clipStyle} />}
         {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} fine />}
-        {dur > 0 && tops.map((c) => c.t_end
-          ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
-              onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />
-          : <div key={c.id} className={`mk ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t) }} onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />)}
       </div>
       <div className="m-head" />
+      {dur > 0 && <div className="m-marks">{tops.map((c) => (
+        <Marker key={c.id} c={c} n={numberOf[c.id]} sel={sel === c.id} left={xp(c.t)} width={c.t_end ? `${((c.t_end - c.t) / span) * 100}%` : null}
+          onDown={(e) => { e.stopPropagation(); onPick(c); }} />
+      ))}</div>}
       <button className="m-add" onPointerDown={(e) => e.stopPropagation()} onClick={onAdd}
         aria-label={pending ? 'Commenter avec les dessins' : 'Ajouter un commentaire à ce moment'}>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
@@ -827,6 +837,20 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   };
   const remember = () => { try { localStorage.setItem('review-name', name); } catch {} setNameOk(true); setEditName(false); };
 
+  const [marking, setMarking] = useState(false);
+  const markerRef = useRef(null);
+  const addMarker = async () => {
+    vid.current?.pause();
+    const f = scrub.current.pending ?? curF;
+    flushScrub();
+    if (!name.trim()) { setStampF(f); setNeedName(true); setEditName(true); setBody('Repère'); setSheet('compose'); return; }
+    setMarking(true);
+    try { const cid = await post({ body: 'Repère', t: f / F, t_end: null, shapes: [] }); remember(); setSel(cid); }
+    catch { alert('Le repère n’a pas pu être posé (accès refusé ou review désactivée).'); }
+    setMarking(false);
+  };
+  markerRef.current = addMarker;
+
   const send = async () => {
     if (!body.trim() || !name.trim()) return;
     remember();
@@ -901,6 +925,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
       else if (e.key === 'ArrowLeft') { e.preventDefault(); stepBy(-1, e.shiftKey, e.repeat); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); stepBy(1, e.shiftKey, e.repeat); }
       else if (e.key === 's' || e.key === 'S') { toggleStep(); }
+      else if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey) { e.preventDefault(); markerRef.current?.(); }
       else if (e.key === 'Escape') { setTool(null); setExpanded(false); }
     };
     // touche relâchée : la vidéo rejoint tout de suite la position affichée
@@ -1000,7 +1025,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   // blocs partagés par la mise en page ordinateur et la mise en page mobile
   const monitorView = (
         <div className={`vstage ${compareN ? 'two' : ''}`} ref={vstage} style={{ '--monitor-toolbar-h': `${monitorBarHeight}px` }}>
-        <VideoMonitor aid={aid} viewportRef={wrap} fit={fit} nativeSize={nativeSize} box={box} playing={playing} onPlay={playPause} onStep={stepF} toolsOpen={toolsOpen} onTools={toggleTools} drawingTools={<DrawingToolbar tool={tool} onTool={pickTool} color={color} onColor={setColor} canUndo={!!shapes.length || !!pin} onUndo={() => shapes.length ? setShapes((items) => items.slice(0, -1)) : setPin(null)} />} onToolbarHeight={setMonitorBarHeight} sessionKey={sessionKey} sourceIdentity={sourceIdentity} ready={dur > 0} onCapture={capture} captureDisabled={isYt || source === 'drive'} capturing={capturing}>
+        <VideoMonitor aid={aid} viewportRef={wrap} fit={fit} nativeSize={nativeSize} box={box} playing={playing} onPlay={playPause} onStep={stepF} toolsOpen={toolsOpen} onTools={toggleTools} drawingTools={<DrawingToolbar only={['arrow', 'pen', 'circle', 'rect']} tool={tool} onTool={pickTool} color={color} onColor={setColor} canUndo={!!shapes.length || !!pin} onUndo={() => shapes.length ? setShapes((items) => items.slice(0, -1)) : setPin(null)} />} onToolbarHeight={setMonitorBarHeight} sessionKey={sessionKey} sourceIdentity={sourceIdentity} ready={dur > 0} onCapture={capture} captureDisabled={isYt || source === 'drive'} capturing={capturing}>
           {compareN && <span className="pane-tag">v{currentN}</span>}
           {isYt ? (
             <>
@@ -1207,7 +1232,6 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         {toolsOpen && tool !== 'pin' && (
           <div className="m-drawbar"><DrawingToolbar tool={tool} onTool={pickTool} color={color} onColor={setColor} only={['pen', 'arrow', 'circle', 'rect']} /></div>
         )}
-        {tool === 'pin' && <div className="m-drawbar m-pinhint">Touche l’image pour placer un repère</div>}
         {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
         <div className="m-ctrl">
           <button className="m-ic" onClick={toggleMute} aria-label={muted ? 'Remettre le son' : 'Couper le son'}><MIcon d={muted ? M_ICONS.mute : M_ICONS.sound} /></button>
@@ -1219,11 +1243,11 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         </div>
         <MobileTrack dur={dur} now={now} F={F} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
           clock={<><b>{tcSimple(now)}<small>:{pad(curF % base)}</small></b>/{tcSimple(dur || 0)}</>}
-          tops={tops} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
+          tops={tops} numberOf={numberOf} sel={sel} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
           onPick={(c) => { setSel(c.id); seekT(c.t); }} onAdd={() => openSheet('compose')} pending={pending} />
         <nav className="m-tools" aria-label="Outils">
           <button aria-label="Dessiner" title="Dessiner" className={toolsOpen && tool !== 'pin' ? 'on' : ''} onClick={() => { if (toolsOpen && tool !== 'pin') { setToolsOpen(false); setTool(null); } else { vid.current?.pause(); setToolsOpen(true); setTool(tool && tool !== 'pin' ? tool : 'pen'); } }}><MIcon d={M_ICONS.pen} /></button>
-          <button aria-label="Repère" title="Repère" className={tool === 'pin' ? 'on' : ''} onClick={() => { vid.current?.pause(); setToolsOpen(false); setTool(tool === 'pin' ? null : 'pin'); }}><MIcon d={M_ICONS.pin} /></button>
+          <button aria-label="Poser un repère sur la timeline" title="Repère" className={marking ? 'on' : ''} onClick={addMarker} disabled={marking}><MIcon d={M_ICONS.marker} /></button>
           <button className="m-history" aria-label="Commentaires" title="Commentaires" onClick={() => openSheet('list')}>
             <MIcon d={M_ICONS.chat} />{tops.length ? <b>{tops.length}</b> : null}
           </button>
@@ -1320,11 +1344,11 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           {pro && ticks.out.map((t) => (
             <div key={t} className="tick" style={{ left: xp(t) }}><span>{tickLabel(t)}</span></div>
           ))}
-          {dur > 0 && tops.map((c) => c.t_end
-            ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
-                onPointerDown={(e) => { if (e.shiftKey) return; e.stopPropagation(); setSel(c.id); seekT(c.t); }} />
-            : <div key={c.id} className={`mk ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t) }} title={`${label(c.t)} — ${c.author}`}
-                onPointerDown={(e) => { if (e.shiftKey) return; e.stopPropagation(); setSel(c.id); seekT(c.t); }} />)}
+          {dur > 0 && tops.map((c) => (
+            <Marker key={c.id} c={c} n={numberOf[c.id]} sel={sel === c.id} left={xp(c.t)} width={c.t_end ? `${((c.t_end - c.t) / span) * 100}%` : null}
+              title={`${rangeLabel(c)} — ${c.author} : ${c.body}`}
+              onDown={(e) => { if (e.shiftKey) return; e.stopPropagation(); setSel(c.id); seekT(c.t); }} />
+          ))}
           {dur > 0 && endF != null && <div className="selzone" style={{ left: xp(stampF / F), width: `${(((endF - stampF) / F) / span) * 100}%` }} />}
           <div className="head" style={{ left: xp(now) }} />
           {hover && <div className="hov" style={{ left: hover.x }}><span>{label(hover.t)}</span></div>}
@@ -1332,6 +1356,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
 
         <div className="transport">
           <div className="timecode"><span className="cur">{label(now)}</span><span className="tot">/ {label(dur || 0)}</span></div>
+          <button className="ghost sm" onClick={addMarker} disabled={marking || !dur} title="Poser un repère à l’image affichée · touche M">Repère</button>
           <div className="spacer" />
           {pro && <span className="meta">{F} images/s</span>}
         </div>
@@ -1386,6 +1411,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
                 <div><dt>Maj + clic</dt><dd>Étendre depuis la tête</dd></div>
                 <div><dt>Maj + glisser</dt><dd>Sélectionner une zone</dd></div>
                 <div><dt>Maj + ← / →</dt><dd>Changer de pas</dd></div>
+                <div><dt>M</dt><dd>Poser un repère</dd></div>
                 <div><dt>Molette</dt><dd>Zoomer</dd></div>
                 <div><dt>Espace</dt><dd>Lecture / pause</dd></div>
                 <div><dt>Alt + ↑ / ↓</dt><dd>Parcourir les commentaires</dd></div>
