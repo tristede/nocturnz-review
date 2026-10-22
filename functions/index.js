@@ -18,7 +18,8 @@ const shareable = (a) => a && !a.revoked && a.access !== 'invite' && !(ms(a.expi
 // page de l'app (index.html du site), gardée quelques minutes en mémoire
 let shell = null, shellAt = 0;
 async function getShell() {
-  if (!shell || Date.now() - shellAt > 300_000) {
+  // court : après un déploiement, les noms des fichiers JS de l'app changent
+  if (!shell || Date.now() - shellAt > 20_000) {
     const r = await fetch(`${SITE}/index.html`);
     if (r.ok) { shell = await r.text(); shellAt = Date.now(); }
   }
@@ -74,6 +75,6 @@ export const og = onRequest({ region: 'europe-west1', memory: '256MiB', maxInsta
   html = html
     .replace(/<meta property="og:[^>]*>\s*/g, '').replace(/<meta name="twitter:[^>]*>\s*/g, '')
     .replace(/<title>[^<]*<\/title>/, `<title>${esc(info ? `${title} · Nocturnz Review` : title)}</title>\n    ${tags}`);
-  res.set('Cache-Control', 'public, max-age=60, s-maxage=300');
+  res.set('Cache-Control', 'public, max-age=60, s-maxage=60');
   res.type('html').send(html);
 });
