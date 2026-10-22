@@ -373,6 +373,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [monitorBarHeight, setMonitorBarHeight] = useState(44);
   const [expanded, setExpanded] = useState(false);
   const mobile = useMedia('(max-width: 760px), (pointer: coarse) and (max-height: 520px)');
+  const mobileRef = useRef(mobile); mobileRef.current = mobile;
   const [sheet, setSheet] = useState(null);      // tiroir des commentaires : null | 'list' | 'compose'
   const noteRef = useRef(null);
   const [compareN, setCompareN] = useState(initialCompare); // version affichée à droite, ou null
@@ -434,11 +435,8 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [draft, setDraft] = useState(null);
   const [muted, setMuted] = useState(false);
   const [dlUrl, setDlUrl] = useState(download);
-  // mobile en paysage : l'image occupe tout l'écran, les outils passent par-dessus (automatique en tournant le téléphone)
-  const landscape = useMedia('(orientation: landscape)');
-  const [nativeFull, setNativeFull] = useState(false); // vrai plein écran du navigateur (Android ; impossible sur iPhone)
-  const [ui, setUi] = useState(true);        // plein écran : outils affichés (un toucher sur l'image les montre / cache)
-  const rootRef = useRef(null); // lien de téléchargement de la version (Drive…)
+  const [isFull, setIsFull] = useState(false); // ordinateur : notre lecteur en plein écran
+  const stageRef = useRef(null); // lien de téléchargement de la version (Drive…)
 
   const [replyTo, setReplyTo] = useState(null);
   const [replyText, setReplyText] = useState('');
@@ -860,24 +858,25 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   };
   markerRef.current = addMarker;
 
-  const full = mobile && landscape;
-  const canNativeFull = typeof document !== 'undefined' && !!document.fullscreenEnabled;
-  const toggleNativeFull = () => {
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    else rootRef.current?.requestFullscreen?.().catch(() => {});
+  // plein écran — mobile : lecteur natif du téléphone (pour regarder ; la review se fait en vertical)
+  //               ordinateur : notre lecteur (vidéo, timeline, outils) occupe l'écran
+  const canNativeVideo = !isYt && source !== 'drive';
+  const nativeFullscreen = () => {
+    const v = vid.current;
+    if (!v) return;
+    if (v.webkitEnterFullscreen) v.webkitEnterFullscreen(); // iPhone
+    else v.requestFullscreen?.().catch(() => {});
   };
-  useEffect(() => { setUi(true); }, [full]);
+  const toggleFull = () => {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else stageRef.current?.requestFullscreen?.().catch(() => {});
+  };
+  const toggleFullRef = useRef(null); toggleFullRef.current = toggleFull;
   useEffect(() => {
-    const f = () => setNativeFull(!!document.fullscreenElement);
+    const f = () => setIsFull(!!document.fullscreenElement && document.fullscreenElement === stageRef.current);
     document.addEventListener('fullscreenchange', f);
     return () => document.removeEventListener('fullscreenchange', f);
   }, []);
-  // pendant la lecture, les outils se masquent après 3 s ; en pause ils restent
-  useEffect(() => {
-    if (!full || !ui || !playing || toolsOpen || sheet) return;
-    const id = setTimeout(() => setUi(false), 3000);
-    return () => clearTimeout(id);
-  }, [full, ui, playing, toolsOpen, sheet]);
 
   // hôte : attacher / changer le lien de téléchargement de cette version
   const editDownload = async () => {
@@ -971,6 +970,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
       else if (e.key === 'ArrowLeft') { e.preventDefault(); stepBy(-1, e.shiftKey, e.repeat); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); stepBy(1, e.shiftKey, e.repeat); }
       else if (e.key === 's' || e.key === 'S') { toggleStep(); }
+      else if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && !mobileRef.current) { e.preventDefault(); toggleFullRef.current?.(); }
       else if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey) { e.preventDefault(); markerRef.current?.(); }
       else if (e.key === 'Escape') { setTool(null); setExpanded(false); }
     };
@@ -1295,7 +1295,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     const verdict = approval ? (approval.status === 'approved' ? '✓ Validée' : 'Modifs') : 'Valider';
     const pending = shapes.length + (pin ? 1 : 0);
     return (
-      <div className={`review mobile ${full ? 'full' : ''} ${full && !ui && !toolsOpen && !sheet ? 'ui-off' : ''}`} ref={rootRef}>
+      <div className="review mobile">
         <header className="m-top">
           <Brand className="m-brand" />
           {back && <Link className="m-back" to={back.to} title={`Retour : ${back.label}`}>← {back.label}</Link>}
@@ -1312,7 +1312,6 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         </header>
         {currentN !== latestN && <button className="m-banner" onClick={() => goVersion(latestN)}>Version récente : v{latestN} · voir</button>}
         {monitorView}
-        {full && !tool && <div className="m-fs-tap" onClick={() => setUi((v) => !v)} />}
         {toolsOpen && tool !== 'pin' && (
           <div className="m-drawbar"><DrawingToolbar tool={tool} onTool={pickTool} color={color} onColor={setColor} only={['pen', 'arrow', 'circle', 'rect']} /></div>
         )}
@@ -1321,7 +1320,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         <div className="m-ctrl">
           <span className="m-left">
             <button className="m-ic" onClick={toggleMute} aria-label={muted ? 'Remettre le son' : 'Couper le son'}><MIcon d={muted ? M_ICONS.mute : M_ICONS.sound} /></button>
-            {full && canNativeFull && <button className="m-ic" onClick={toggleNativeFull} aria-label={nativeFull ? 'Quitter le plein écran' : 'Plein écran'}><MIcon d={nativeFull ? M_ICONS.shrink : M_ICONS.expand} /></button>}
+            {canNativeVideo && <button className="m-ic" onClick={nativeFullscreen} aria-label="Plein écran"><MIcon d={M_ICONS.expand} /></button>}
           </span>
           <button className="m-ic m-playbtn" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}><MIcon d={playing ? M_ICONS.pause : M_ICONS.play} /></button>
           <span className="m-undo">
@@ -1363,7 +1362,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   }
 
   return (
-    <div className={`review ${expanded ? 'review-expanded' : ''}`}>
+    <div className={`review ${expanded ? 'review-expanded' : ''} ${isFull ? 'review-full' : ''}`} ref={stageRef}>
       <div className="stage">
         <header className="topbar">
           <div>
@@ -1383,6 +1382,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           <div className="row">
             {downloadBtn}
             {admin && <button className="ghost sm" onClick={editDownload} title="Lien Drive que le client ouvre avec « Télécharger »">{dlUrl ? 'Lien de téléchargement' : '+ Lien de téléchargement'}</button>}
+            <button className="ghost sm" onClick={toggleFull} title="Plein écran avec les outils · touche F">{isFull ? 'Quitter le plein écran' : 'Plein écran'}</button>
             <button className="ghost sm" aria-pressed={expanded} onClick={() => setExpanded((value) => !value)} title={expanded ? 'Revenir à la vue avec commentaires · Échap' : 'Agrandir le lecteur et masquer les commentaires'}>{expanded ? 'Réduire' : 'Agrandir'}</button>
             {cmpable.length > 0 && <button className={compareN ? 'ghost on' : 'ghost'} onClick={toggleCompare} title="Voir deux versions côte à côte, lecture synchronisée">Comparer</button>}
             {versions.length > 1 && (
@@ -1506,6 +1506,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
                 <div><dt>Maj + glisser</dt><dd>Sélectionner une zone</dd></div>
                 <div><dt>Maj + ← / →</dt><dd>Changer de pas</dd></div>
                 <div><dt>M</dt><dd>Poser un repère</dd></div>
+                <div><dt>F</dt><dd>Plein écran</dd></div>
                 <div><dt>Molette</dt><dd>Zoomer</dd></div>
                 <div><dt>Espace</dt><dd>Lecture / pause</dd></div>
                 <div><dt>Alt + ↑ / ↓</dt><dd>Parcourir les commentaires</dd></div>

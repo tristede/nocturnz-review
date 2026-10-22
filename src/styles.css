@@ -849,22 +849,8 @@ a.dl-btn { height: 30px; padding: 0 12px; font-size: 12.5px; }
 .m-tools a.m-dl { display: grid; place-items: center; width: 52px; height: 40px; color: #fff; }
 .m-tools a.m-dl svg { width: 22px; height: 22px; }
 
-/* ───────── mobile plein écran (paysage) : l'image partout, les outils par-dessus ───────── */
 .m-left { display: flex; gap: 2px; }
-.review.mobile.full { position: fixed; inset: 0; z-index: 30; height: 100dvh; }
-.review.mobile.full .vstage { position: absolute; inset: 0; padding: 0; min-height: 0; z-index: 0; }
-.review.mobile.full .monitor-viewport.vwrap { border-radius: 0; }
-.m-fs-tap { position: absolute; inset: 0; z-index: 1; }
-.review.mobile.full .m-top { position: absolute; left: 0; right: 0; top: 0; z-index: 2; padding: max(8px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 22px max(14px, env(safe-area-inset-left)); background: linear-gradient(rgba(0, 0, 0, .78), transparent); }
-.review.mobile.full .m-banner, .review.mobile.full > .notes { display: none; }
-.review.mobile.full .m-drawbar { position: absolute; top: 52px; left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); z-index: 3; margin: 0; padding: 6px; border-radius: 10px; background: rgba(0, 0, 0, .7); }
-.review.mobile.full .m-dock { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; display: grid; grid-template-columns: auto 1fr; align-items: center; padding: 18px max(4px, env(safe-area-inset-right)) 0 max(4px, env(safe-area-inset-left)); background: linear-gradient(transparent, rgba(0, 0, 0, .82) 26%); }
-.review.mobile.full .m-ctrl { border: 0; padding: 0 6px; gap: 8px; }
-.review.mobile.full .m-tools { margin: 0; justify-content: flex-end; gap: 4px; padding: 0 6px; background: none; }
-.review.mobile.full .m-track { grid-column: 1 / -1; height: 92px; padding-bottom: env(safe-area-inset-bottom); }
-.review.mobile.full .m-sound { height: 52px; }
-.review.mobile.full button.m-add { top: calc(34px + 26px - 21px); }
-.review.mobile.full .m-clock { background: linear-gradient(90deg, #000 80%, transparent); }
-.review.mobile .m-top, .review.mobile .m-dock { transition: opacity .2s; }
-.review.mobile.ui-off .m-top, .review.mobile.ui-off .m-dock { opacity: 0; pointer-events: none; }
 .m-dock { flex: none; }
+
+/* ordinateur : notre lecteur en plein écran (vidéo, timeline, outils et commentaires) */
+.review.review-full { width: 100vw; height: 100vh; background: var(--bg); }
