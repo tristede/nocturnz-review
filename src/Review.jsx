@@ -7,7 +7,8 @@ import { captureAnnotatedFrame } from './captureFrame';
 import DrawingToolbar from './DrawingToolbar';
 import * as data from './data';
 import { notifyHost } from './push';
-import { videoUrl, driveMeta } from './links';
+import { videoUrl, driveMeta, thumbUrl } from './links';
+import { useFilmstrip } from './filmstrip';
 import { peaksFromLocalMp4, peaksFromBuffer, encodePeaks, b64ToBytes } from './audioPeaks';
 import { COLORS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause } from './draw';
 
@@ -158,14 +159,62 @@ const M_ICONS = {
   pin: <><path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z" /><circle cx="12" cy="10" r="2.2" /></>,
   camera: <><path d="M3 7h4l2-3h6l2 3h4v13H3z" /><circle cx="12" cy="13" r="3.6" /></>,
   back: <path d="M15 5 8 12l7 7" />,
+  down: <path d="m5 9 7 7 7-7" />,
+  chat: <><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.1A8 8 0 1 1 20 12z" /><path d="M8.5 12h.01M12 12h.01M15.5 12h.01" strokeWidth="2.4" /></>,
+  sound: <><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" /><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" /></>,
+  mute: <><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" /><path d="m16 9.5 5 5m0-5-5 5" /></>,
+  undo: <path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />,
+  redo: <path d="m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />,
+  play: <path d="M7 4.8v14.4c0 .8.9 1.3 1.6.9l11-7.2c.6-.4.6-1.4 0-1.8l-11-7.2C7.9 3.5 7 4 7 4.8z" />,
+  pause: <path d="M7.5 5v14M16.5 5v14" strokeWidth="2.6" />,
 };
+
+// pellicule : vignettes collées à la timeline (une vignette = une image prise à son début)
+function FilmLane({ frames, ratio, dur, vs, span }) {
+  const ref = useRef(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const ro = new ResizeObserver(() => setSize({ w: ref.current.clientWidth, h: ref.current.clientHeight }));
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    const cv = ref.current, { w, h } = size;
+    if (!w || !h || !dur) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = w * dpr; cv.height = h * dpr;
+    const g = cv.getContext('2d');
+    g.scale(dpr, dpr);
+    const x0 = ((0 - vs) / span) * w, x1 = ((dur - vs) / span) * w;
+    const left = Math.max(x0, -12), right = Math.min(x1, w + 12);
+    if (right <= left) return;
+    g.save();
+    g.beginPath(); g.roundRect(x0, 0, x1 - x0, h, 8); g.clip();
+    g.fillStyle = '#1d1a2a'; g.fillRect(left, 0, right - left, h);
+    const tw = h * clamp(ratio, 0.5, 1.78), tt = (tw / w) * span; // largeur d'une vignette, en pixels puis en secondes
+    for (let k = Math.max(0, Math.floor(vs / tt)); k * tt < Math.min(dur, vs + span); k++) {
+      const t = k * tt, x = ((t - vs) / span) * w;
+      let f = null;
+      for (const fr of frames) if (fr.t <= t + tt / 2) f = fr;
+      f ??= frames[0];
+      if (!f) continue;
+      const iw = f.img.naturalWidth || f.img.width, ih = f.img.naturalHeight || f.img.height;
+      const s = Math.max(tw / iw, h / ih), sw = tw / s, sh = h / s; // recadrage « cover »
+      try { g.drawImage(f.img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, x, 0, tw + 0.5, h); } catch {}
+    }
+    g.restore();
+  }, [frames, ratio, dur, vs, span, size]);
+  return <canvas ref={ref} className="m-film" />;
+}
+
+const rulerLabel = (t) => (t < 60 ? `${t}s` : `${Math.floor(t / 60)}:${pad(Math.round(t % 60))}`);
 
 // Timeline mobile façon CapCut : la tête reste au centre, la timeline défile sous le doigt.
 // Glisser lentement = image par image ; deux doigts ou double toucher = zoom.
-function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick }) {
+function MobileTrack({ dur, now, F, clock, durLabel, film, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick, onAdd, pending }) {
   const el = useRef(null);
   const [w, setW] = useState(360);
-  const [pps, setPps] = useState(40);              // pixels par seconde
+  const [pps, setPps] = useState(64);              // pixels par seconde
   const g = useRef({ pts: new Map(), start: null, pinch: null, lastTap: 0 });
   useEffect(() => {
     const ro = new ResizeObserver(() => setW(el.current?.clientWidth || 360));
@@ -213,21 +262,41 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
     else if (st.start && !st.pinch) {
       // double toucher : tout voir ⇄ zoom de travail
       const t = performance.now();
-      if (t - st.lastTap < 320) { setPps((p) => (p > minPps * 1.5 ? minPps : 40)); st.lastTap = 0; } else st.lastTap = t;
+      if (t - st.lastTap < 320) { setPps((p) => (p > minPps * 1.5 ? minPps : 64)); st.lastTap = 0; } else st.lastTap = t;
     }
     st.start = null; st.pinch = null;
   };
 
+  // graduations : au moins ~60 px entre deux repères
+  const step = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800].find((s) => s * pps >= 60) || 3600;
+  const ticks = [];
+  if (dur > 0) for (let t = Math.max(0, Math.ceil(vs / step) * step); t <= Math.min(dur, vs + span) && ticks.length < 60; t += step) ticks.push(Math.round(t * 10) / 10);
+  const clipStyle = { left: xp(0), width: `${(dur / span) * 100}%` };
+
   return (
     <div className="m-track" ref={el} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-      {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
-      {dur > 0 && tops.map((c) => c.t_end
-        ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
-            onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />
-        : <div key={c.id} className={`mk ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t) }} onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />)}
-      {dur > 0 && <div className="m-edge" style={{ left: xp(0) }} />}
-      {dur > 0 && <div className="m-edge" style={{ left: xp(dur) }} />}
+      <div className="m-ruler">
+        {ticks.map((t) => <span key={t} style={{ left: xp(t) }}>{rulerLabel(t)}</span>)}
+      </div>
+      <div className="m-clock">{clock}</div>
+      <div className="m-lane m-clip">
+        {dur > 0 && <FilmLane frames={film.frames} ratio={film.ratio} dur={dur} vs={vs} span={span} />}
+        {dur > 0 && <span className="m-dur" style={{ left: `max(6px, calc(${xp(0)} + 8px))` }}>{durLabel}</span>}
+        {dur > 0 && tops.map((c) => c.t_end
+          ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
+              onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />
+          : <div key={c.id} className={`mk ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t) }} onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />)}
+      </div>
+      <div className="m-lane m-sound">
+        {dur > 0 && <div className="m-sound-bg" style={clipStyle} />}
+        {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
+      </div>
       <div className="m-head" />
+      <button className="m-add" onPointerDown={(e) => e.stopPropagation()} onClick={onAdd}
+        aria-label={pending ? 'Commenter avec les dessins' : 'Ajouter un commentaire à ce moment'}>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+        {pending > 0 && <i>{pending}</i>}
+      </button>
     </div>
   );
 }
@@ -364,7 +433,9 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [color, setColor] = useState(COLORS[0]);
   const [pin, setPin] = useState(null);
   const [shapes, setShapes] = useState([]);
+  const [redoStack, setRedoStack] = useState([]); // dessins annulés, à refaire (mobile)
   const [draft, setDraft] = useState(null);
+  const [muted, setMuted] = useState(false);
 
   const [replyTo, setReplyTo] = useState(null);
   const [replyText, setReplyText] = useState('');
@@ -443,12 +514,15 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     const el = vstage.current;
     if (!el) return;
     const calc = () => {
-      const w = el.clientWidth, h = Math.max(1, el.clientHeight - monitorBarHeight);
+      const cs = getComputedStyle(el);
+      const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const h = Math.max(1, el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - monitorBarHeight);
       if (!w || !h) return;
       const mobile = window.innerWidth <= 900, gap = 12;
       const cols = compareN && !mobile ? 2 : 1;
       const bw = (w - gap * (cols - 1)) / cols;
-      const pw = Math.min(bw, mobile ? Infinity : h * ratio);
+      // lecteur mobile plein écran : la vidéo tient aussi en hauteur (vidéos verticales)
+      const pw = Math.min(bw, mobile && !el.closest('.review.mobile') ? Infinity : h * ratio);
       const nw = Math.floor(pw), nh = Math.floor(pw / ratio);
       setFit((f) => (f && f.w === nw && f.h === nh && f.availableW === bw ? f : { w: nw, h: nh, availableW: bw }));
     };
@@ -719,6 +793,18 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const beginCompose = () => { vid.current?.pause(); };
   const pickTool = (t) => { beginCompose(); setTool((cur) => (cur === t ? null : t)); };
   const toggleTools = () => { setToolsOpen((o) => { if (o) setTool(null); else vid.current?.pause(); return !o; }); };
+  // annuler / refaire le dernier dessin du brouillon
+  const undoDraw = () => {
+    if (shapes.length) { const last = shapes[shapes.length - 1]; setShapes(shapes.slice(0, -1)); setRedoStack((r) => [...r, { shape: last }]); }
+    else if (pin) { setRedoStack((r) => [...r, { pin }]); setPin(null); }
+  };
+  const redoDraw = () => {
+    const it = redoStack[redoStack.length - 1];
+    if (!it) return;
+    setRedoStack(redoStack.slice(0, -1));
+    if (it.pin) setPin(it.pin); else setShapes((s) => [...s, it.shape]);
+  };
+  const toggleMute = () => { const v = vid.current; if (!v) return; v.muted = !v.muted; setMuted(v.muted); };
 
   // --- dessin ---
   const point = (e) => {
@@ -730,6 +816,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     if (!draftHere && (shapes.length || pin)) { seekF(stampF); return; }
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = point(e);
+    setRedoStack([]);
     if (tool === 'pin') return setPin(p);
     setDraft({ type: tool, c: color, pts: [p], a: p, b: p });
   };
@@ -746,7 +833,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     if (ok) setShapes((s) => [...s, toShape(d)]);
   };
 
-  const resetDraft = () => { setBody(''); setEndF(null); setTool(null); setToolsOpen(false); setPin(null); setShapes([]); setDraft(null); };
+  const resetDraft = () => { setBody(''); setEndF(null); setTool(null); setToolsOpen(false); setPin(null); setShapes([]); setRedoStack([]); setDraft(null); };
 
   // le commentaire d'un client déclenche une notification push chez l'hôte
   const post = async (payload) => {
@@ -925,6 +1012,8 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const draftLabel = endF != null ? `${label(stampF / F)} → ${label(endF / F)}` : label(stampF / F);
 
   const flatPeaks = useMemo(() => ({ l: new Uint8Array(400).fill(16), r: null }), []); // onde plate de remplacement
+  // pellicule de la timeline mobile (seulement sur mobile : elle relit la vidéo en arrière-plan)
+  const film = useFilmstrip(!mobile || source === 'drive' ? {} : isYt ? { poster: thumbUrl('youtube', videoId) } : { src: videoUrl(source, videoId, mediaUrl), dur });
 
   // blocs partagés par la mise en page ordinateur et la mise en page mobile
   const monitorView = (
@@ -1107,52 +1196,66 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   );
 
   // --- mobile : tiroir des commentaires ---
+  const closeVerdict = useRef(null); closeVerdict.current = () => { if (sheet === 'verdict') setSheet(null); };
+  useEffect(() => { if (approval) closeVerdict.current(); }, [approval]);
   const openSheet = (mode) => { vid.current?.pause(); setSheet(mode); if (mode === 'compose') setTimeout(() => noteRef.current?.focus(), 260); };
 
   if (mobile) {
-    const shortStatus = approval ? (approval.status === 'approved' ? 'Validée' : 'Modifications demandées') : admin ? 'En attente de l’avis du client' : `v${currentN}`;
+    const shortStatus = approval ? (approval.status === 'approved' ? 'Validée' : 'Modifications demandées') : admin ? 'En attente de l’avis du client' : null;
+    const verdict = approval ? (approval.status === 'approved' ? '✓ Validée' : 'Modifs demandées') : 'Valider';
+    const pending = shapes.length + (pin ? 1 : 0);
     return (
       <div className="review mobile">
         <header className="m-top">
-          {back ? <Link className="m-icon" to={back.to} aria-label={`Retour : ${back.label}`}><MIcon d={M_ICONS.back} /></Link> : <span />}
-          <div className="m-title"><b>{title}</b><span>{shortStatus}</span></div>
-          {versions.length > 1 ? (
-            <select className="m-version" value={currentN} onChange={(e) => goVersion(Number(e.target.value))} aria-label="Version">
-              {versions.map((x) => <option key={x.n} value={x.n}>v{x.n}{x.status === 'approved' ? ' ✓' : ''}</option>)}
-            </select>
-          ) : <span className="m-version">v{currentN}</span>}
+          {back ? <Link className="m-icon" to={back.to} aria-label={`Retour : ${back.label}`}><MIcon d={M_ICONS.down} /></Link> : <span />}
+          <div className="m-title">
+            <b>{title}</b>
+            <span>
+              {versions.length > 1 ? (
+                <select className="m-version" value={currentN} onChange={(e) => goVersion(Number(e.target.value))} aria-label="Version">
+                  {versions.map((x) => <option key={x.n} value={x.n}>v{x.n}{x.status === 'approved' ? ' ✓' : ''}</option>)}
+                </select>
+              ) : `v${currentN}`}
+              {shortStatus && <> · {shortStatus}</>}
+            </span>
+          </div>
+          {!admin ? <button className={`m-next ${approval?.status || ''}`} onClick={() => openSheet('verdict')}>{verdict}</button> : <span />}
         </header>
         {currentN !== latestN && <button className="m-banner" onClick={() => goVersion(latestN)}>Version récente : v{latestN} · voir</button>}
-        {approvalView}
         {monitorView}
         {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
-        <div className="m-time">
-          <div className="m-tc"><span className="cur">{label(now)}</span><span className="tot">/ {label(dur || 0)}</span></div>
-          <button className="m-plus" onClick={() => openSheet('compose')} aria-label={drawing ? 'Commenter avec les dessins' : 'Ajouter un commentaire à ce moment'}>
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-            {drawing && <i>{shapes.length + (pin ? 1 : 0)}</i>}
-          </button>
-          <button className="ghost m-play" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}>{playing ? <IconPause /> : <IconPlay />}</button>
+        <div className="m-ctrl">
+          <button className="m-ic" onClick={toggleMute} aria-label={muted ? 'Remettre le son' : 'Couper le son'}><MIcon d={muted ? M_ICONS.mute : M_ICONS.sound} /></button>
+          <button className="m-ic m-playbtn" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}><MIcon d={playing ? M_ICONS.pause : M_ICONS.play} /></button>
+          <span className="m-undo">
+            <button className="m-ic" onClick={undoDraw} disabled={!pending} aria-label="Annuler le dernier dessin"><MIcon d={M_ICONS.undo} /></button>
+            <button className="m-ic" onClick={redoDraw} disabled={!redoStack.length} aria-label="Refaire le dessin"><MIcon d={M_ICONS.redo} /></button>
+          </span>
         </div>
-        <MobileTrack dur={dur} now={now} F={F} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
+        <MobileTrack dur={dur} now={now} F={F} film={film} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
+          clock={<><b>{label(now)}</b>/{label(dur || 0)}</>} durLabel={dur < 60 ? `${(Math.round(dur * 10) / 10).toString().replace('.', ',')}s` : label(dur)}
           tops={tops} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
-          onPick={(c) => { setSel(c.id); seekT(c.t); }} />
-        <nav className="m-bar m-tools" aria-label="Outils">
+          onPick={(c) => { setSel(c.id); seekT(c.t); }} onAdd={() => openSheet('compose')} pending={pending} />
+        <nav className="m-tools" aria-label="Outils">
           <button className={toolsOpen && tool !== 'pin' ? 'on' : ''} onClick={() => { if (toolsOpen && tool !== 'pin') { setToolsOpen(false); setTool(null); } else { vid.current?.pause(); setToolsOpen(true); setTool(tool && tool !== 'pin' ? tool : 'pen'); } }}><MIcon d={M_ICONS.pen} /><span>Dessiner</span></button>
           <button className={tool === 'pin' ? 'on' : ''} onClick={() => { vid.current?.pause(); setToolsOpen(true); setTool(tool === 'pin' ? null : 'pin'); }}><MIcon d={M_ICONS.pin} /><span>Repère</span></button>
           <button className="m-history" onClick={() => openSheet('list')}>
-            <MIcon d={<><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4.1A8 8 0 1 1 20 12z" /><path d="M8.5 12h.01M12 12h.01M15.5 12h.01" strokeWidth="2.4" /></>} />
-            <span>Historique</span>{tops.length ? <b>{tops.length}</b> : null}
+            <MIcon d={M_ICONS.chat} /><span>Commentaires</span>{tops.length ? <b>{tops.length}</b> : null}
           </button>
           {!(isYt || source === 'drive') && <button onClick={capture} disabled={capturing}><MIcon d={M_ICONS.camera} /><span>Capture</span></button>}
         </nav>
         {sheet && <div className="m-veil" onClick={() => setSheet(null)} />}
         <section className={`m-sheet ${sheet ? `open ${sheet}` : ''}`} aria-hidden={!sheet}>
-          <button className="m-handle" aria-label="Fermer les commentaires" onClick={() => setSheet(null)}><i /></button>
-          <div className="m-sheet-head"><h2>Commentaires</h2><CommentNavigation comments={shown} currentId={sel} position={curF / F} onSelect={(c) => { setSel(c.id); seekT(c.t); setSheet(null); }} /></div>
-          {sheet === 'list' && filtersView}
-          {sheet === 'list' && commentList}
-          {composeView}
+          <button className="m-handle" aria-label="Fermer" onClick={() => setSheet(null)}><i /></button>
+          {sheet === 'verdict' ? <div className="m-verdict">
+            {approvalView}
+            {askName && <input placeholder="Ton prénom (pour signer ton avis)" value={name} onChange={(e) => setName(e.target.value)} />}
+          </div> : <>
+            <div className="m-sheet-head"><h2>Commentaires</h2><CommentNavigation comments={shown} currentId={sel} position={curF / F} onSelect={(c) => { setSel(c.id); seekT(c.t); setSheet(null); }} /></div>
+            {sheet === 'list' && filtersView}
+            {sheet === 'list' && commentList}
+            {composeView}
+          </>}
         </section>
       </div>
     );
