@@ -6,6 +6,9 @@ import { readSession, writeSession } from './reviewSession';
 import { captureAnnotatedFrame } from './captureFrame';
 import DrawingToolbar from './DrawingToolbar';
 import AudioMeter from './AudioMeter';
+
+// indicateur de niveau audio : masqué pour le moment (à revoir), le composant reste prêt
+const SHOW_METER = false;
 import * as data from './data';
 import { notifyHost } from './push';
 import { videoUrl, driveMeta, cleanDownloadUrl } from './links';
@@ -1382,7 +1385,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
             </div>
           </div>
         )}
-        <div className="m-meterbar"><AudioMeter peaks={peaks} dur={dur} getTime={meterTime} playing={playing} now={now} /></div>
+        {SHOW_METER && <div className="m-meterbar"><AudioMeter peaks={peaks} dur={dur} getTime={meterTime} playing={playing} now={now} /></div>}
         <div className="m-dock">
         <div className="m-ctrl">
           <span className="m-left">
@@ -1530,7 +1533,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         <div className="transport">
           <div className="timecode"><span className="cur">{label(now)}</span><span className="tot">/ {label(dur || 0)}</span></div>
           <button className="ghost sm" onClick={addMarker} disabled={marking || !dur} title="Poser un repère à l’image affichée · touche M">Repère</button>
-          <div className="meter-wrap"><AudioMeter peaks={peaks} dur={dur} getTime={meterTime} playing={playing} now={now} /></div>
+          {SHOW_METER && <div className="meter-wrap"><AudioMeter peaks={peaks} dur={dur} getTime={meterTime} playing={playing} now={now} /></div>}
           <div className="spacer" />
           {pro && <span className="meta">{F} images/s</span>}
         </div>
