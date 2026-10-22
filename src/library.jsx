@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import * as data from './data';
 import { ACCEPTED, APP_ICONS } from './appIcons';
 import { KIND_LABEL, checkYouTube, driveMeta, kindOf, parseLink, thumbUrl } from './links';
-import { fmtGB, removeObject, usage } from './storage';
+import { clearBucket, fmtGB, purgeKeys, usage } from './storage';
 import { importFile, keysOf } from './importer';
 
 const DAY = 86_400_000;
@@ -52,23 +52,74 @@ export function StorageGauge() {
 export function ExpiredCleanup({ assets, onDone }) {
   const { hosting, refresh } = useHosting();
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
   const old = assets.filter((a) => a.expiresAt && a.expiresAt < Date.now() && a.versions.some((v) => v.source === 'file'));
   if (!hosting || !old.length) return null;
   const bytes = old.reduce((n, a) => n + a.versions.reduce((m, v) => m + (v.source === 'file' ? v.size || 0 : 0), 0), 0);
   const purge = async () => {
-    setBusy(true);
+    setBusy(true); setErr('');
     try {
       for (const a of old) {
-        for (const k of a.versions.flatMap(keysOf)) await removeObject(hosting, k);
+        await purgeKeys(hosting, a.versions.flatMap(keysOf));
         await data.deleteAsset(a.id);
       }
-    } finally { setBusy(false); refresh(); onDone(); }
+    } catch (e) { setErr(e.message || 'Échec'); }
+    finally { setBusy(false); refresh(); onDone(); }
   };
   return (
     <div className="gauge-line expired">
+      {err && <span className="warn">{err}</span>}
       <span className="mut">{old.length} review{old.length > 1 ? 's' : ''} expirée{old.length > 1 ? 's' : ''} occupe{old.length > 1 ? 'nt' : ''} encore {fmtGB(bytes)}.</span>
       {busy ? <span className="mut">Suppression…</span> : <DeleteButton label="Supprimer les reviews expirées et leurs fichiers" confirmText={`Supprimer ${old.length > 1 ? 'les' : 'la'} review${old.length > 1 ? 's' : ''} ?`} onConfirm={purge} />}
     </div>
+  );
+}
+
+// zone dangereuse : efface tous les projets et reviews du profil, puis vide l'espace de stockage (taper EFFACER pour confirmer)
+export function ResetAll({ uid, assets, projects, onDone }) {
+  const { hosting, refresh } = useHosting();
+  const [open, setOpen] = useState(false);
+  const [word, setWord] = useState('');
+  const [step, setStep] = useState('');
+  const [err, setErr] = useState('');
+  const busy = !!step;
+  const empty = !assets.length && !projects.length && !hosting;
+  if (empty) return null;
+  const go = async (e) => {
+    e.preventDefault();
+    if (word.trim().toUpperCase() !== 'EFFACER') return;
+    setErr('');
+    try {
+      for (let i = 0; i < assets.length; i++) {
+        setStep(`Reviews ${i + 1}/${assets.length}…`);
+        await data.deleteAsset(assets[i].id);
+      }
+      for (let i = 0; i < projects.length; i++) {
+        setStep(`Projets ${i + 1}/${projects.length}…`);
+        await data.deleteProject(projects[i].id, uid);
+      }
+      if (hosting) {
+        setStep('Stockage…');
+        await clearBucket(hosting, (n) => setStep(`Stockage : ${n} fichier${n > 1 ? 's' : ''} effacé${n > 1 ? 's' : ''}…`));
+      }
+      setOpen(false); setWord('');
+    } catch (ex) { setErr(ex.message || 'Échec'); }
+    finally { setStep(''); refresh(); onDone(); }
+  };
+  if (!open) return <p className="reset-line"><button className="link" onClick={() => setOpen(true)}>Tout effacer : projets, reviews et stockage</button></p>;
+  return (
+    <form className="reset-box" onSubmit={go}>
+      <strong>Tout effacer ?</strong>
+      <span className="mut">
+        Supprime définitivement {projects.length} projet{projects.length > 1 ? 's' : ''}, {assets.length} review{assets.length > 1 ? 's' : ''} (versions et commentaires compris){hosting ? ' et vide tout ton espace de stockage' : ''}. Les liens de partage cesseront de fonctionner. Impossible à annuler.
+      </span>
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <input value={word} onChange={(e) => setWord(e.target.value)} placeholder="Tape EFFACER" autoComplete="off" disabled={busy} autoFocus />
+        <button className="sm danger" disabled={busy || word.trim().toUpperCase() !== 'EFFACER'}>{busy ? step : 'Tout effacer'}</button>
+        <button type="button" className="ghost sm" disabled={busy} onClick={() => { setOpen(false); setWord(''); setErr(''); }}>Annuler</button>
+      </div>
+      {err && <span className="mut warn">{err}</span>}
+    </form>
   );
 }
 
@@ -379,7 +430,7 @@ export function AssetCard({ a, projects = [], onChange, onDragging }) {
   // supprimer la review efface aussi ses fichiers importés (et libère la place)
   const remove = () => run(async () => {
     const keys = a.versions.flatMap(keysOf);
-    if (keys.length && hosting) for (const k of keys) await removeObject(hosting, k);
+    if (keys.length && hosting) await purgeKeys(hosting, keys); // échec : la review reste, rien n'est supprimé à moitié
     await data.deleteAsset(a.id);
     if (keys.length) refresh();
   });

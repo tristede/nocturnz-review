@@ -74,6 +74,38 @@ export async function usage(h) {
 export const removeObject = (h, key) => call(h, 'DELETE', key).catch(() => {});
 
 /**
+ * Efface des fichiers et vérifie, en relisant l'espace, qu'ils n'y sont plus. Lève une erreur sinon :
+ * l'appelant ne doit supprimer la review (et rafraîchir la jauge) qu'après ce retour.
+ */
+export async function purgeKeys(h, keys) {
+  for (const k of keys) await call(h, 'DELETE', k);
+  for (const k of keys) {
+    const { text } = await call(h, 'GET', '', { query: `list-type=2&max-keys=10&prefix=${encodeURIComponent(k)}` });
+    if ([...text.matchAll(/<Key>([^<]*)<\/Key>/g)].some((m) => unxml(m[1]) === k)) {
+      throw new Error('Un fichier n’a pas pu être effacé du stockage : la review est conservée. Réessaie.');
+    }
+  }
+}
+
+const unxml = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+
+/** Vide tout l'espace de l'hôte (fichiers orphelins compris). onProgress(supprimés). Renvoie le nombre d'objets effacés. */
+export async function clearBucket(h, onProgress) {
+  let done = 0;
+  for (;;) {
+    const { text } = await call(h, 'GET', '', { query: 'list-type=2&max-keys=1000' });
+    const keys = [...text.matchAll(/<Key>([^<]*)<\/Key>/g)].map((m) => unxml(m[1]));
+    if (!keys.length) return done;
+    for (let i = 0; i < keys.length; i += 8) {
+      // pas de removeObject ici : une erreur silencieuse bouclerait à l'infini sur la même liste
+      await Promise.all(keys.slice(i, i + 8).map((k) => call(h, 'DELETE', k)));
+      done += Math.min(8, keys.length - i);
+      onProgress?.(done);
+    }
+  }
+}
+
+/**
  * Envoie un fichier ; gros fichiers en plusieurs morceaux (3 en parallèle, 3 essais chacun).
  * onProgress(0..1), signal = AbortSignal pour annuler.
  */

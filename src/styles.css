@@ -765,3 +765,8 @@ button.icon-btn.on { color: #fff; border-color: rgba(142, 123, 255, .55); backgr
 .club-state.ok { color: var(--ok); background: rgba(88, 207, 160, .12); }
 a.ghost-link { display: inline-flex; align-items: center; height: 34px; padding: 0 15px; border-radius: var(--r); text-decoration: none; font-weight: 500; color: #d8d6e8; border: 1px solid var(--line2); background: rgba(255, 255, 255, .025); }
 a.ghost-link:hover { background: rgba(255, 255, 255, .075); color: #fff; }
+
+/* zone dangereuse : tout effacer */
+.reset-line { margin: 48px 0 8px; font-size: 12px; text-align: center; }
+.reset-line .link { color: #ff8a8a; }
+.reset-box { display: flex; flex-direction: column; gap: 10px; margin: 48px 0 8px; padding: 14px 16px; border: 1px solid rgba(255, 107, 107, .4); border-radius: 10px; background: rgba(255, 90, 90, .06); font-size: 13px; }

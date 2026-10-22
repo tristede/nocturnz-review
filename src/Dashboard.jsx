@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { usingEmulators } from './firebase';
 import * as data from './data';
-import { AddAssetForm, AssetCard, DeleteButton, DropBar, DropZone, ExpiredCleanup, HostingProvider, StorageGauge, Thumb, latestOf, openCount } from './library';
+import { AddAssetForm, AssetCard, DeleteButton, DropBar, DropZone, ExpiredCleanup, HostingProvider, ResetAll, StorageGauge, Thumb, latestOf, openCount } from './library';
 import Notice from './Notice';
 import ProjectDeadline from './ProjectDeadline';
 import { disablePush, enablePush, isIOS, isStandalone, pushState } from './push';
@@ -357,6 +357,7 @@ export default function Dashboard() {
           {dragging && lib.projects.length > 0 && <DropBar targets={lib.projects} onDropAsset={move} />}
           {loose.map((a) => <AssetCard key={a.id} a={a} projects={lib.projects} onChange={reload} onDragging={setDragging} />)}
           {!loose.length && !lib.assets.length && <p className="mut empty-line">Aucune review</p>}
+          <ResetAll uid={user.uid} assets={lib.assets} projects={lib.projects} onDone={reload} />
         </>
       )}
     </div>
