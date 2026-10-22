@@ -894,6 +894,12 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     if (!confirm('Supprimer ce commentaire ?')) return;
     data.deleteComment(aid, currentN, c.id).catch(() => {});
   };
+  // actions groupées sur une zone
+  const resolveAll = (items) => items.filter((c) => !c.resolved).forEach((c) => data.setResolved(aid, currentN, c.id, true).catch(() => {}));
+  const deleteAll = (items) => {
+    if (!confirm(`Supprimer ces ${items.length} éléments ?`)) return;
+    items.forEach((c) => data.deleteComment(aid, currentN, c.id).catch(() => {}));
+  };
   const copyLink = (c) => { try { navigator.clipboard.writeText(`${location.origin}${location.pathname}?c=${c.id}`); } catch {} };
   // erreur de lecture : codec illisible, quota Drive du fichier dépassé, ou fichier inaccessible
   const onVideoError = async (code) => {
@@ -944,7 +950,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const shown = tops.filter((c) => {
     if (status === 'open' && c.resolved) return false;
     if (status === 'done' && !c.resolved) return false;
-    if (onlyMarked && !hasMarks(c)) return false;
+    if (onlyMarked && !hasMarks(c) && c.body !== 'Repère') return false;
     const thread = [c, ...kids(c.id)];
     if (author && !thread.some((x) => x.author === author)) return false;
     if (q && !thread.some((x) => x.body.toLowerCase().includes(q.toLowerCase()))) return false;
@@ -1121,7 +1127,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
                 <button key={k} className={status === k ? 'on' : ''} onClick={() => setStatus(k)}>{l}</button>
               ))}
             </div>
-            {pro && <button className={onlyMarked ? 'ghost sm on' : 'ghost sm'} onClick={() => setOnlyMarked((v) => !v)}>Dessinés</button>}
+<button className={onlyMarked ? 'ghost sm on' : 'ghost sm'} onClick={() => setOnlyMarked((v) => !v)} title="Seulement les dessins et repères">Dessins</button>
           </div>
           {pro && (
             <div className="row">
@@ -1134,16 +1140,48 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           )}
         </div>
   );
+  const ZONE_GAP = 5;
+  const zones = [];
+  for (const c of [...shown].sort((a, b) => a.t - b.t)) {
+    const z = zones[zones.length - 1];
+    if (z && c.t - z.end <= ZONE_GAP) { z.items.push(c); z.end = Math.max(z.end, c.t_end ?? c.t); }
+    else zones.push({ start: c.t, end: c.t_end ?? c.t, items: [c] });
+  }
+  const kindOf = (c) => (c.body === 'Repère' && !hasMarks(c) ? 'marker' : hasMarks(c) ? 'drawing' : 'comment');
+  const zoneSummary = (items) => {
+    const n = { drawing: 0, marker: 0, comment: 0 };
+    items.forEach((c) => n[kindOf(c)]++);
+    return [n.drawing && `${n.drawing} dessin${n.drawing > 1 ? 's' : ''}`, n.marker && `${n.marker} repère${n.marker > 1 ? 's' : ''}`, n.comment && `${n.comment} commentaire${n.comment > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+  };
+  const preview = (c) => (
+    <span className="cm-preview" style={{ aspectRatio: ratio }}>
+      <svg viewBox="0 0 1 1" preserveAspectRatio="none">{(c.shapes || []).map((sh, i) => <Shape key={i} s={sh} box={{ w: 64 * ratio, h: 64 }} />)}</svg>
+      {c.x != null && <i style={{ left: `${c.x * 100}%`, top: `${c.y * 100}%` }} />}
+    </span>
+  );
   const commentList = (
         <div className="list">
-          {shown.map((c) => (
+          {zones.map((z) => (
+            <section key={z.items[0].id} className={`zone ${z.items.length > 1 ? 'multi' : ''}`}>
+              {z.items.length > 1 && (
+                <header className="zone-head">
+                  <button className="link zone-time" onClick={() => { setSel(z.items[0].id); seekT(z.start); }}>Zone {label(z.start)} → {label(z.end)}</button>
+                  <span className="mut">{zoneSummary(z.items)}</span>
+                  <span className="row" style={{ gap: 4, marginLeft: 'auto' }}>
+                    {z.items.some((c) => !c.resolved) && <button className="ghost sm" onClick={() => resolveAll(z.items)}>✓ Tout valider</button>}
+                    {admin && <button className="ghost sm" onClick={() => deleteAll(z.items)}>Tout supprimer</button>}
+                  </span>
+                </header>
+              )}
+          {z.items.map((c) => (
             <div key={c.id} data-comment-id={c.id} className={`cm ${c.resolved ? 'done' : ''} ${sel === c.id ? 'sel' : ''}`}
               onClick={() => { setSel(c.id); seekT(c.t); if (mobile) setSheet(null); }}>
               <div className="cm-head">
                 <span>
                   <span className="num">{numberOf[c.id]}</span><span className="tc">{rangeLabel(c)}</span> · <strong>{c.author}</strong>
                   <span className="when" title={new Date(c.created_at).toLocaleString('fr-BE')}>{fmtWhen(c.created_at)}</span>
-                  {hasMarks(c) && <span className="tag">dessin</span>}
+                  {kindOf(c) === 'marker' && <span className="tag tag-marker">repère</span>}
+                  {kindOf(c) === 'drawing' && <span className="tag">dessin</span>}
                 </span>
                 <span className="row" style={{ gap: 4 }} onClick={(e) => e.stopPropagation()}>
                   {pro && <button className="ghost sm" title="Copier le lien vers ce commentaire" onClick={() => copyLink(c)}>Lien</button>}
@@ -1151,7 +1189,10 @@ export default function Review({ aid, title, admin, back = null, deadline = null
                   {admin && <button className="ghost sm" aria-label="Supprimer" onClick={() => del(c)}>✕</button>}
                 </span>
               </div>
-              <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>
+              <div className="cm-body">
+                {kindOf(c) === 'drawing' && preview(c)}
+                {kindOf(c) !== 'marker' && <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>}
+              </div>
               {kids(c.id).map((r) => (
                 <div key={r.id} className="reply">
                   <strong>{r.author}</strong> <span className="when">{fmtWhen(r.created_at)}</span>
@@ -1170,6 +1211,8 @@ export default function Review({ aid, title, admin, back = null, deadline = null
                 )}
               </div>
             </div>
+          ))}
+            </section>
           ))}
           {!shown.length && <p className="mut">{tops.length ? 'Aucun résultat.' : 'Aucun commentaire.'}</p>}
         </div>
