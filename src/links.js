@@ -1,5 +1,13 @@
 import { firebaseConfig } from './firebaseConfig';
 
+// lien de téléchargement attaché à une version (en général un lien Drive) : seulement http(s)
+export const cleanDownloadUrl = (input) => {
+  try {
+    const u = new URL(String(input).trim());
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : null;
+  } catch { return null; }
+};
+
 export const parseYouTubeId = (input) => {
   try {
     const u = new URL(String(input).trim());

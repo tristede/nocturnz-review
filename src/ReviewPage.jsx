@@ -92,6 +92,7 @@ export default function ReviewPage() {
       source={current.source}
       videoId={current.videoId}
       mediaUrl={current.url || null}
+      download={current.download || null}
       fileBytes={current.size || null}
       versions={versions.map((x) => ({ n: x.n, status: x.status, source: x.source, videoId: x.videoId, kind: x.kind || 'video', url: x.url || null }))}
       currentN={current.n}

@@ -7,7 +7,7 @@ import { captureAnnotatedFrame } from './captureFrame';
 import DrawingToolbar from './DrawingToolbar';
 import * as data from './data';
 import { notifyHost } from './push';
-import { videoUrl, driveMeta } from './links';
+import { videoUrl, driveMeta, cleanDownloadUrl } from './links';
 import { peaksFromLocalMp4, peaksFromBuffer, encodePeaks, b64ToBytes } from './audioPeaks';
 import Brand, { BackButton } from './Brand';
 import { COLORS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause } from './draw';
@@ -158,6 +158,7 @@ const MIcon = ({ d }) => <svg width="22" height="22" viewBox="0 0 24 24" fill="n
 const M_ICONS = {
   pen: <path d="m4 16 12-12 4 4L8 20H4zM13 7l4 4" />,
   marker: <path d="M6 4h12v10l-6 6-6-6z" />,
+  download: <path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19.5h14" />,
   camera: <><path d="M3 7h4l2-3h6l2 3h4v13H3z" /><circle cx="12" cy="13" r="3.6" /></>,
   back: <path d="M15 5 8 12l7 7" />,
   down: <path d="m5 9 7 7 7-7" />,
@@ -355,7 +356,7 @@ function createYtShim({ host, videoId, box, onDuration, onState, onTime }) {
   return { shim, destroy() { dead = true; clearInterval(poll); try { player?.destroy(); } catch {} host.remove(); } };
 }
 
-export default function Review({ aid, title, admin, back = null, deadline = null, initialFps, initialPeaks, source, videoId, mediaUrl = null, fileBytes = null, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
+export default function Review({ aid, title, admin, back = null, deadline = null, initialFps, initialPeaks, source, videoId, mediaUrl = null, download = null, fileBytes = null, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
   const isYt = source === 'youtube';
   const sessionKey = `review-session:${aid}:${currentN}`, sourceIdentity = `${source}:${videoId}`;
   const [remembered] = useState(() => readSession(sessionKey, sourceIdentity));
@@ -430,6 +431,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [redoStack, setRedoStack] = useState([]); // dessins annulés, à refaire (mobile)
   const [draft, setDraft] = useState(null);
   const [muted, setMuted] = useState(false);
+  const [dlUrl, setDlUrl] = useState(download); // lien de téléchargement de la version (Drive…)
 
   const [replyTo, setReplyTo] = useState(null);
   const [replyText, setReplyText] = useState('');
@@ -850,6 +852,18 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     setMarking(false);
   };
   markerRef.current = addMarker;
+
+  // hôte : attacher / changer le lien de téléchargement de cette version
+  const editDownload = async () => {
+    const raw = prompt('Lien de téléchargement de cette version (lien Drive du fichier). Vide = retirer.', dlUrl || '');
+    if (raw == null) return;
+    const url = raw.trim() ? cleanDownloadUrl(raw) : null;
+    if (raw.trim() && !url) { alert('Lien invalide : il doit commencer par https://'); return; }
+    try { await data.saveVersion(aid, currentN, { download: url }); setDlUrl(url); } catch { alert('Le lien n’a pas pu être enregistré.'); }
+  };
+  const downloadBtn = dlUrl
+    ? <a className="ghost-link dl-btn" href={dlUrl} target="_blank" rel="noopener noreferrer">Télécharger</a>
+    : null;
 
   const send = async () => {
     if (!body.trim() || !name.trim()) return;
@@ -1294,6 +1308,9 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           <button className="m-history" aria-label="Commentaires" title="Commentaires" onClick={() => openSheet('list')}>
             <MIcon d={M_ICONS.chat} />{tops.length ? <b>{tops.length}</b> : null}
           </button>
+          {dlUrl
+            ? <a className="m-dl" href={dlUrl} target="_blank" rel="noopener noreferrer" aria-label="Télécharger le fichier" title="Télécharger"><MIcon d={M_ICONS.download} /></a>
+            : admin && <button aria-label="Ajouter un lien de téléchargement" title="Lien de téléchargement" onClick={editDownload}><MIcon d={M_ICONS.download} /></button>}
           {!(isYt || source === 'drive') && <button aria-label="Capture" title="Capture" onClick={capture} disabled={capturing}><MIcon d={M_ICONS.camera} /></button>}
         </nav>
         {sheet && <div className="m-veil" onClick={() => setSheet(null)} />}
@@ -1332,6 +1349,8 @@ export default function Review({ aid, title, admin, back = null, deadline = null
             )}
           </div>
           <div className="row">
+            {downloadBtn}
+            {admin && <button className="ghost sm" onClick={editDownload} title="Lien Drive que le client ouvre avec « Télécharger »">{dlUrl ? 'Lien de téléchargement' : '+ Lien de téléchargement'}</button>}
             <button className="ghost sm" aria-pressed={expanded} onClick={() => setExpanded((value) => !value)} title={expanded ? 'Revenir à la vue avec commentaires · Échap' : 'Agrandir le lecteur et masquer les commentaires'}>{expanded ? 'Réduire' : 'Agrandir'}</button>
             {cmpable.length > 0 && <button className={compareN ? 'ghost on' : 'ghost'} onClick={toggleCompare} title="Voir deux versions côte à côte, lecture synchronisée">Comparer</button>}
             {versions.length > 1 && (

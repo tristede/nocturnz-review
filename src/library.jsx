@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import * as data from './data';
 import { ACCEPTED, APP_ICONS } from './appIcons';
-import { KIND_LABEL, checkYouTube, driveMeta, kindOf, parseLink, thumbUrl } from './links';
+import { KIND_LABEL, checkYouTube, cleanDownloadUrl, driveMeta, kindOf, parseLink, thumbUrl } from './links';
 import { clearBucket, fmtGB, purgeKeys, usage } from './storage';
 import { importFile, keysOf } from './importer';
 
@@ -449,6 +449,13 @@ export function AssetCard({ a, projects = [], onChange, onDragging }) {
       form.reset();
     });
   };
+  const saveDownload = (e) => {
+    e.preventDefault();
+    const raw = String(new FormData(e.currentTarget).get('download')).trim();
+    const url = raw ? cleanDownloadUrl(raw) : null;
+    if (raw && !url) { setMsg('Lien de téléchargement invalide (il doit commencer par https://).'); return; }
+    run(() => data.saveVersion(a.id, latest.n, { download: url }));
+  };
   const saveFps = (e) => {
     e.preventDefault();
     const v = Number(new FormData(e.currentTarget).get('fps'));
@@ -522,6 +529,11 @@ export function AssetCard({ a, projects = [], onChange, onDragging }) {
                 <button className="ghost sm">OK</button>
                 <span className="mut" style={{ fontSize: 12 }}>v{latest.n}</span>
               </form>}
+              <label className="lbl">Lien de téléchargement (v{latest.n})</label>
+              <form onSubmit={saveDownload} className="row" key={`dl${latest.n}${latest.download || ''}`}>
+                <input name="download" type="url" defaultValue={latest.download || ''} placeholder="Lien Drive du fichier final" />
+                <button className="ghost sm">OK</button>
+              </form>
               <label className="lbl">Projet</label>
               <select value={a.project || ''} style={{ width: '100%' }} onChange={(e) => run(() => data.moveAsset(a.id, e.target.value))}>
                 <option value="">Sans projet</option>
