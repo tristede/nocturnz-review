@@ -66,7 +66,7 @@ const WAVE_STYLES = [['bars', 'Barres'], ['solid', 'Plein'], ['line', 'Ligne']];
 
 // onde sonore : suit exactement la vue (zoom/défilement) de la timeline ; les deux canaux sont fusionnés
 // low = onde posée en bas de la piste au lieu d'être centrée
-function Wave({ peaks, dur, vs, span, variant, tint, low, muted }) {
+function Wave({ peaks, dur, vs, span, variant, tint, low, muted, fine = false }) {
   const ref = useRef(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const merged = useMemo(() => (peaks.r ? peaks.l.map((v, i) => Math.max(v, peaks.r[i])) : peaks.l), [peaks]);
@@ -102,12 +102,13 @@ function Wave({ peaks, dur, vs, span, variant, tint, low, muted }) {
       const maxHeight = low ? hl / 2 - 1 : hl * 0.64;
       const yOf = (hh) => (low ? base - hh : axis - hh / 2);
       if (variant === 'bars') {
-        for (let x = 0; x < w; x += 4) {
-          const v = col(x, x + 4);
+        const bs = fine ? 2 : 4, bw = fine ? 1.4 : 3; // fine : une barre tous les 2 px
+        for (let x = 0; x < w; x += bs) {
+          const v = col(x, x + bs);
           if (v == null) continue;
           const hh = Math.max(1, v * maxHeight);
           g.fillStyle = color(v);
-          g.fillRect(x, yOf(hh), 3, hh);
+          g.fillRect(x, yOf(hh), bw, hh);
         }
       } else if (variant === 'solid') {
         for (let x = 0; x < w; x++) {
@@ -138,7 +139,7 @@ function Wave({ peaks, dur, vs, span, variant, tint, low, muted }) {
     g.fillStyle = 'rgba(203,179,236,.12)';
     g.fillRect(0, Math.floor(h / 2), w, 1);
     lane(merged, 0, h);
-  }, [peaks, merged, dur, vs, span, size, variant, tint, low, muted]);
+  }, [peaks, merged, dur, vs, span, size, variant, tint, low, muted, fine]);
   return <canvas ref={ref} className="wave" style={{ top: 0, height: '100%' }} />;
 }
 
@@ -169,7 +170,12 @@ const M_ICONS = {
   pause: <path d="M8 5v14M16 5v14" />,
 };
 
-const rulerLabel = (t) => (t < 60 ? `${t}s` : `${Math.floor(t / 60)}:${pad(Math.round(t % 60))}`);
+// libellé d'une graduation : « 2s », « 2,4s » sous la seconde, « 1:05 » au-delà d'une minute
+const rulerLabel = (t, step) => {
+  if (t >= 60 && step >= 1) return `${Math.floor(t / 60)}:${pad(Math.round(t % 60))}`;
+  const digits = step >= 1 ? 0 : step >= 0.1 ? 1 : 2;
+  return `${t.toFixed(digits).replace('.', ',')}s`;
+};
 
 // Timeline mobile façon CapCut : la tête reste au centre, la timeline défile sous le doigt.
 // Glisser lentement = image par image ; deux doigts ou double toucher = zoom.
@@ -188,7 +194,8 @@ function MobileTrack({ dur, now, F, clock, peaks, flatPeaks, waveStyle, waveTint
     const node = el.current;
     return () => { ro.disconnect(); node.removeEventListener('touchstart', stop); node.removeEventListener('touchmove', stop); };
   }, []);
-  const span = w / pps, vs = now - span / 2;
+  // la tête marque le début de l'image affichée (le lecteur vise le milieu de l'image pour éviter les arrondis)
+  const span = w / pps, vs = Math.floor(now * F + 1e-4) / F - span / 2;
   const xp = (t) => `${((t - vs) / span) * 100}%`;
   const maxF = Math.max(0, Math.ceil(dur * F) - 1);
   // dézoom maximal : toute la vidéo visible d'un côté de la tête ; zoom maximal : ~16 px par image à 25 i/s
@@ -237,21 +244,32 @@ function MobileTrack({ dur, now, F, clock, peaks, flatPeaks, waveStyle, waveTint
     st.start = null; st.pinch = null;
   };
 
-  // graduations : au moins ~60 px entre deux repères
-  const step = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800].find((s) => s * pps >= 60) || 3600;
-  const ticks = [];
-  if (dur > 0) for (let t = Math.max(0, Math.ceil(vs / step) * step); t <= Math.min(dur, vs + span) && ticks.length < 60; t += step) ticks.push(Math.round(t * 10) / 10);
+  // graduations : libellées tous les ~64 px au moins ; traits secondaires entre deux (jusqu'à l'image près)
+  const fr = 1 / F;
+  const steps = [fr, 2 * fr, 5 * fr, 10 * fr, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  const step = steps.find((x) => x * pps >= 64) || 3600;
+  const minor = [step / 10, step / 5, step / 4, step / 2].map((x) => Math.max(x, fr)).find((x) => x * pps >= 7 && Math.abs(step / x - Math.round(step / x)) < 1e-6) || null;
+  const ticks = [], minors = [];
+  if (dur > 0) {
+    const t0 = Math.max(0, vs), t1 = Math.min(dur, vs + span);
+    for (let k = Math.ceil(t0 / step - 1e-9); k * step <= t1 + 1e-9 && ticks.length < 80; k++) ticks.push(k * step);
+    if (minor) for (let k = Math.ceil(t0 / minor - 1e-9); k * minor <= t1 + 1e-9 && minors.length < 400; k++) {
+      const t = k * minor;
+      if (Math.abs(t / step - Math.round(t / step)) > 1e-6) minors.push(t);
+    }
+  }
   const clipStyle = { left: xp(0), width: `${(dur / span) * 100}%` };
 
   return (
     <div className="m-track" ref={el} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
       <div className="m-ruler">
-        {ticks.map((t) => <span key={t} style={{ left: xp(t) }}>{rulerLabel(t)}</span>)}
+        {minors.map((t) => <i key={`m${t}`} className="m-minor" style={{ left: xp(t) }} />)}
+        {ticks.map((t) => <span key={t} style={{ left: xp(t) }}>{rulerLabel(t, step)}</span>)}
       </div>
       <div className="m-clock">{clock}</div>
       <div className="m-lane m-sound">
         {dur > 0 && <div className="m-sound-bg" style={clipStyle} />}
-        {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
+        {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} fine />}
         {dur > 0 && tops.map((c) => c.t_end
           ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
               onPointerDown={(e) => { e.stopPropagation(); onPick(c); }} />
@@ -1200,7 +1218,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           </span>
         </div>
         <MobileTrack dur={dur} now={now} F={F} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
-          clock={<><b>{label(now)}</b>/{label(dur || 0)}</>}
+          clock={<><b>{tcSimple(now)}<small>:{pad(curF % base)}</small></b>/{tcSimple(dur || 0)}</>}
           tops={tops} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
           onPick={(c) => { setSel(c.id); seekT(c.t); }} onAdd={() => openSheet('compose')} pending={pending} />
         <nav className="m-tools" aria-label="Outils">
