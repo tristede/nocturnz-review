@@ -5,6 +5,7 @@ import { useAuth } from './AuthContext';
 import * as data from './data';
 import { AddAssetForm, AssetCard, AssetTile, DeleteButton, DropBar, HostingProvider, LinkLine, SharePanel, StorageGauge } from './library';
 import Notice from './Notice';
+import Brand, { BackButton } from './Brand';
 import ProjectDeadline, { DeadlineBadge } from './ProjectDeadline';
 
 export default function ProjectPage() {
@@ -51,7 +52,7 @@ export default function ProjectPage() {
   if (!admin) {
     return (
       <div className="wrap">
-        <div className="brand"><span>nocturnz</span><b>/ review</b></div>
+        <Brand />
         <div className="eyebrow">Projet</div>
         <h1>{project.name}</h1>
         <DeadlineBadge value={project.dueDate} label />
@@ -74,7 +75,8 @@ export default function ProjectPage() {
   return (
     <HostingProvider uid={user.uid}>
     <div className="wrap">
-      <Link className="eyebrow back" to="/">← Vos reviews</Link>
+      <Brand />
+      <BackButton to="/" label="Tous les projets" />
       <div className="project-head">
         {renaming ? (
           <form onSubmit={rename} className="row" style={{ flex: 1 }}>

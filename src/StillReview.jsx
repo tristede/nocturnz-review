@@ -9,6 +9,7 @@ import * as data from './data';
 import { notifyHost } from './push';
 import { KIND_LABEL } from './links';
 import { openStill } from './stills';
+import Brand, { BackButton } from './Brand';
 import { COLORS, clamp, parse, hasMarks, Shape, toShape, IconChevron } from './draw';
 
 const ZOOMS = [1, 1.5, 2, 3, 4];
@@ -214,8 +215,9 @@ export default function StillReview({ aid, title, admin, back = null, deadline =
       <div className="stage">
         <header className="topbar">
           <div>
+            <div className="review-nav"><Brand />{back && <BackButton to={back.to} label={back.label} />}</div>
             <div className="review-context">{back
-              ? <Link className="eyebrow back" to={back.to}>← {back.label}</Link>
+              ? <span className="eyebrow">Projet · {back.label}</span>
               : <div className="eyebrow">Review · {kindLabel}</div>}{deadline}</div>
             <h1 className="title">{title}</h1>
             {admin && (

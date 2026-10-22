@@ -10,6 +10,7 @@ import { notifyHost } from './push';
 import { videoUrl, driveMeta, thumbUrl } from './links';
 import { useFilmstrip } from './filmstrip';
 import { peaksFromLocalMp4, peaksFromBuffer, encodePeaks, b64ToBytes } from './audioPeaks';
+import Brand, { BackButton } from './Brand';
 import { COLORS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause } from './draw';
 
 const PRESETS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
@@ -153,7 +154,7 @@ function useMedia(q) {
   return m;
 }
 
-const MIcon = ({ d }) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
+const MIcon = ({ d }) => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>;
 const M_ICONS = {
   pen: <path d="m4 16 12-12 4 4L8 20H4zM13 7l4 4" />,
   pin: <><path d="M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11z" /><circle cx="12" cy="10" r="2.2" /></>,
@@ -166,7 +167,7 @@ const M_ICONS = {
   undo: <path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />,
   redo: <path d="m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />,
   play: <path d="M7 4.8v14.4c0 .8.9 1.3 1.6.9l11-7.2c.6-.4.6-1.4 0-1.8l-11-7.2C7.9 3.5 7 4 7 4.8z" />,
-  pause: <path d="M7.5 5v14M16.5 5v14" strokeWidth="2.6" />,
+  pause: <path d="M8 5v14M16 5v14" />,
 };
 
 // pellicule : vignettes collées à la timeline (une vignette = une image prise à son début)
@@ -1202,24 +1203,23 @@ export default function Review({ aid, title, admin, back = null, deadline = null
 
   if (mobile) {
     const shortStatus = approval ? (approval.status === 'approved' ? 'Validée' : 'Modifications demandées') : admin ? 'En attente de l’avis du client' : null;
-    const verdict = approval ? (approval.status === 'approved' ? '✓ Validée' : 'Modifs demandées') : 'Valider';
+    const verdict = approval ? (approval.status === 'approved' ? '✓ Validée' : 'Modifs') : 'Valider';
     const pending = shapes.length + (pin ? 1 : 0);
     return (
       <div className="review mobile">
         <header className="m-top">
-          {back ? <Link className="m-icon" to={back.to} aria-label={`Retour : ${back.label}`}><MIcon d={M_ICONS.down} /></Link> : <span />}
+          <Brand className="m-brand" />
+          {back && <Link className="m-back" to={back.to} title={`Retour : ${back.label}`}>← {back.label}</Link>}
           <div className="m-title">
             <b>{title}</b>
-            <span>
-              {versions.length > 1 ? (
-                <select className="m-version" value={currentN} onChange={(e) => goVersion(Number(e.target.value))} aria-label="Version">
-                  {versions.map((x) => <option key={x.n} value={x.n}>v{x.n}{x.status === 'approved' ? ' ✓' : ''}</option>)}
-                </select>
-              ) : `v${currentN}`}
-              {shortStatus && <> · {shortStatus}</>}
-            </span>
+            {versions.length > 1 ? (
+              <select className="m-version" value={currentN} onChange={(e) => goVersion(Number(e.target.value))} aria-label="Version">
+                {versions.map((x) => <option key={x.n} value={x.n}>v{x.n}{x.status === 'approved' ? ' ✓' : ''}</option>)}
+              </select>
+            ) : <span className="m-v">v{currentN}</span>}
+            {admin && <i className={`m-dot ${approval?.status || ''}`} title={shortStatus} aria-label={shortStatus} />}
           </div>
-          {!admin ? <button className={`m-next ${approval?.status || ''}`} onClick={() => openSheet('verdict')}>{verdict}</button> : <span />}
+          {!admin && <button className={`m-next ${approval?.status || ''}`} onClick={() => openSheet('verdict')}>{verdict}</button>}
         </header>
         {currentN !== latestN && <button className="m-banner" onClick={() => goVersion(latestN)}>Version récente : v{latestN} · voir</button>}
         {monitorView}
@@ -1237,12 +1237,12 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           tops={tops} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
           onPick={(c) => { setSel(c.id); seekT(c.t); }} onAdd={() => openSheet('compose')} pending={pending} />
         <nav className="m-tools" aria-label="Outils">
-          <button className={toolsOpen && tool !== 'pin' ? 'on' : ''} onClick={() => { if (toolsOpen && tool !== 'pin') { setToolsOpen(false); setTool(null); } else { vid.current?.pause(); setToolsOpen(true); setTool(tool && tool !== 'pin' ? tool : 'pen'); } }}><MIcon d={M_ICONS.pen} /><span>Dessiner</span></button>
-          <button className={tool === 'pin' ? 'on' : ''} onClick={() => { vid.current?.pause(); setToolsOpen(true); setTool(tool === 'pin' ? null : 'pin'); }}><MIcon d={M_ICONS.pin} /><span>Repère</span></button>
-          <button className="m-history" onClick={() => openSheet('list')}>
-            <MIcon d={M_ICONS.chat} /><span>Commentaires</span>{tops.length ? <b>{tops.length}</b> : null}
+          <button aria-label="Dessiner" title="Dessiner" className={toolsOpen && tool !== 'pin' ? 'on' : ''} onClick={() => { if (toolsOpen && tool !== 'pin') { setToolsOpen(false); setTool(null); } else { vid.current?.pause(); setToolsOpen(true); setTool(tool && tool !== 'pin' ? tool : 'pen'); } }}><MIcon d={M_ICONS.pen} /></button>
+          <button aria-label="Repère" title="Repère" className={tool === 'pin' ? 'on' : ''} onClick={() => { vid.current?.pause(); setToolsOpen(true); setTool(tool === 'pin' ? null : 'pin'); }}><MIcon d={M_ICONS.pin} /></button>
+          <button className="m-history" aria-label="Commentaires" title="Commentaires" onClick={() => openSheet('list')}>
+            <MIcon d={M_ICONS.chat} />{tops.length ? <b>{tops.length}</b> : null}
           </button>
-          {!(isYt || source === 'drive') && <button onClick={capture} disabled={capturing}><MIcon d={M_ICONS.camera} /><span>Capture</span></button>}
+          {!(isYt || source === 'drive') && <button aria-label="Capture" title="Capture" onClick={capture} disabled={capturing}><MIcon d={M_ICONS.camera} /></button>}
         </nav>
         {sheet && <div className="m-veil" onClick={() => setSheet(null)} />}
         <section className={`m-sheet ${sheet ? `open ${sheet}` : ''}`} aria-hidden={!sheet}>
@@ -1266,8 +1266,9 @@ export default function Review({ aid, title, admin, back = null, deadline = null
       <div className="stage">
         <header className="topbar">
           <div>
+            <div className="review-nav"><Brand />{back && <BackButton to={back.to} label={back.label} />}</div>
             <div className="review-context">{back
-              ? <Link className="eyebrow back" to={back.to}>← {back.label}</Link>
+              ? <span className="eyebrow">Projet · {back.label}</span>
               : <div className="eyebrow">Review{isYt ? ' · YouTube' : ''}</div>}{deadline}</div>
             <h1 className="title">{title}</h1>
             {admin && (

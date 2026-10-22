@@ -6,6 +6,7 @@ import * as data from './data';
 import { AddAssetForm, AssetCard, DeleteButton, DropBar, DropZone, ExpiredCleanup, HostingProvider, ResetAll, StorageGauge, Thumb, latestOf, openCount } from './library';
 import Notice from './Notice';
 import ProjectDeadline from './ProjectDeadline';
+import Brand from './Brand';
 import { disablePush, enablePush, isIOS, isStandalone, pushState } from './push';
 
 // menu « ⋯ » d'une tuile de projet : tout gérer sans ouvrir le projet
@@ -282,6 +283,17 @@ function ClubButton({ user }) {
   );
 }
 
+// accueil sans accès : alpha fermée, sur parrainage ; un invité doit repasser par son lien de partage
+function AlphaNote() {
+  return (
+    <div className="alpha-note">
+      <span className="alpha-tag">Alpha fermée</span>
+      <p><strong>Tu as reçu un lien de partage ?</strong> Retourne sur ce lien : il t’ouvre directement la review ou le projet qu’on t’a partagé.</p>
+      <p className="mut">Pour utiliser l’app avec tes propres projets, il faut être parrainé par un membre. Sans parrainage, la connexion ne donne pas accès à l’espace de travail.</p>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user, ready, signIn, signOut, switchAccount } = useAuth();
   const [lib, setLib] = useState(null);
@@ -304,8 +316,9 @@ export default function Dashboard() {
   if (!user) {
     return (
       <Notice title="Review">
+        <AlphaNote />
         <div className="row" style={{ flexWrap: 'wrap' }}>
-          <button onClick={() => signIn().catch((e) => setErr(e.message))}>Me connecter</button>
+          <button onClick={() => signIn().catch((e) => setErr(e.message))}>Me connecter (membres)</button>
           {usingEmulators && <button className="ghost" onClick={() => window.__devSignIn('host@example.test').catch((e) => setErr(e.message))}>Entrer en aperçu local</button>}
         </div>
         {err && <p className="mut" style={{ marginTop: 14 }}>{err}</p>}
@@ -314,7 +327,8 @@ export default function Dashboard() {
   }
   if (denied) {
     return (
-      <Notice title="Accès refusé" text="Cette adresse n’a pas été invitée au club. Si on t’a invité, c’est avec une autre adresse Gmail.">
+      <Notice title="Accès refusé" text="Cette adresse n’a pas été parrainée. Si on t’a parrainé, c’est avec une autre adresse Gmail.">
+        <AlphaNote />
         <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={() => switchAccount().catch(() => {})}>Changer de compte</button></p>
       </Notice>
     );
@@ -333,7 +347,7 @@ export default function Dashboard() {
     <HostingProvider uid={user.uid}>
     <div className="wrap">
       <div className="row dashbar" style={{ justifyContent: 'space-between' }}>
-        <div className="brand" style={{ margin: 0 }}><span>nocturnz</span><b>/ review</b></div>
+        <Brand style={{ margin: 0 }} />
         <div className="dash-actions"><ClubButton user={user} /><NotifyButton /><span className="mut dash-email">{user.email}</span><button className="ghost sm" onClick={signOut}>Se déconnecter</button></div>
       </div>
       <IOSGuide />
