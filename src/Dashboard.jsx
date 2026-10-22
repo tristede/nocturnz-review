@@ -287,9 +287,8 @@ function ClubButton({ user }) {
 function AlphaNote() {
   return (
     <div className="alpha-note">
-      <span className="alpha-tag">Alpha fermée</span>
-      <p><strong>Tu as reçu un lien de partage ?</strong> Retourne sur ce lien : il t’ouvre directement la review ou le projet qu’on t’a partagé.</p>
-      <p className="mut">Pour utiliser l’app avec tes propres projets, il faut être parrainé par un membre. Sans parrainage, la connexion ne donne pas accès à l’espace de travail.</p>
+      <p>Tu as reçu un lien de partage ? Retourne sur ce lien : il t’ouvre directement la review ou le projet partagé.</p>
+      <p>Alpha fermée : l’accès à l’espace de travail se fait uniquement par parrainage.</p>
     </div>
   );
 }
@@ -316,12 +315,12 @@ export default function Dashboard() {
   if (!user) {
     return (
       <Notice title="Review">
-        <AlphaNote />
         <div className="row" style={{ flexWrap: 'wrap' }}>
           <button onClick={() => signIn().catch((e) => setErr(e.message))}>Me connecter (membres)</button>
           {usingEmulators && <button className="ghost" onClick={() => window.__devSignIn('host@example.test').catch((e) => setErr(e.message))}>Entrer en aperçu local</button>}
         </div>
         {err && <p className="mut" style={{ marginTop: 14 }}>{err}</p>}
+        <AlphaNote />
       </Notice>
     );
   }

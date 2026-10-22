@@ -158,6 +158,8 @@ const MIcon = ({ d }) => <svg width="22" height="22" viewBox="0 0 24 24" fill="n
 const M_ICONS = {
   pen: <path d="m4 16 12-12 4 4L8 20H4zM13 7l4 4" />,
   marker: <path d="M6 4h12v10l-6 6-6-6z" />,
+  expand: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,
+  shrink: <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />,
   download: <path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19.5h14" />,
   camera: <><path d="M3 7h4l2-3h6l2 3h4v13H3z" /><circle cx="12" cy="13" r="3.6" /></>,
   back: <path d="M15 5 8 12l7 7" />,
@@ -370,7 +372,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [nativeSize, setNativeSize] = useState(null);
   const [monitorBarHeight, setMonitorBarHeight] = useState(44);
   const [expanded, setExpanded] = useState(false);
-  const mobile = useMedia('(max-width: 760px)');
+  const mobile = useMedia('(max-width: 760px), (pointer: coarse) and (max-height: 520px)');
   const [sheet, setSheet] = useState(null);      // tiroir des commentaires : null | 'list' | 'compose'
   const noteRef = useRef(null);
   const [compareN, setCompareN] = useState(initialCompare); // version affichée à droite, ou null
@@ -431,7 +433,10 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [redoStack, setRedoStack] = useState([]); // dessins annulés, à refaire (mobile)
   const [draft, setDraft] = useState(null);
   const [muted, setMuted] = useState(false);
-  const [dlUrl, setDlUrl] = useState(download); // lien de téléchargement de la version (Drive…)
+  const [dlUrl, setDlUrl] = useState(download);
+  const [full, setFull] = useState(false);   // mobile : plein écran (paysage), outils par-dessus l'image
+  const [ui, setUi] = useState(true);        // plein écran : outils affichés (un toucher sur l'image les montre / cache)
+  const rootRef = useRef(null); // lien de téléchargement de la version (Drive…)
 
   const [replyTo, setReplyTo] = useState(null);
   const [replyText, setReplyText] = useState('');
@@ -853,6 +858,29 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   };
   markerRef.current = addMarker;
 
+  // plein écran : API Fullscreen + paysage quand le navigateur le permet (sinon l'écran est simplement occupé en entier,
+  // l'iPhone n'autorisant le plein écran que pour son propre lecteur)
+  const enterFull = () => {
+    setFull(true); setUi(true);
+    rootRef.current?.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+  };
+  const exitFull = () => {
+    setFull(false); setUi(true);
+    try { screen.orientation?.unlock?.(); } catch {}
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  };
+  useEffect(() => {
+    const f = () => { if (!document.fullscreenElement) setFull(false); };
+    document.addEventListener('fullscreenchange', f);
+    return () => document.removeEventListener('fullscreenchange', f);
+  }, []);
+  // pendant la lecture, les outils se masquent après 3 s ; en pause ils restent
+  useEffect(() => {
+    if (!full || !ui || !playing || toolsOpen || sheet) return;
+    const id = setTimeout(() => setUi(false), 3000);
+    return () => clearTimeout(id);
+  }, [full, ui, playing, toolsOpen, sheet]);
+
   // hôte : attacher / changer le lien de téléchargement de cette version
   const editDownload = async () => {
     const raw = prompt('Lien de téléchargement de cette version (lien Drive du fichier). Vide = retirer.', dlUrl || '');
@@ -1269,7 +1297,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     const verdict = approval ? (approval.status === 'approved' ? '✓ Validée' : 'Modifs') : 'Valider';
     const pending = shapes.length + (pin ? 1 : 0);
     return (
-      <div className="review mobile">
+      <div className={`review mobile ${full ? 'full' : ''} ${full && !ui && !toolsOpen && !sheet ? 'ui-off' : ''}`} ref={rootRef}>
         <header className="m-top">
           <Brand className="m-brand" />
           {back && <Link className="m-back" to={back.to} title={`Retour : ${back.label}`}>← {back.label}</Link>}
@@ -1286,12 +1314,17 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         </header>
         {currentN !== latestN && <button className="m-banner" onClick={() => goVersion(latestN)}>Version récente : v{latestN} · voir</button>}
         {monitorView}
+        {full && !tool && <div className="m-fs-tap" onClick={() => setUi((v) => !v)} />}
         {toolsOpen && tool !== 'pin' && (
           <div className="m-drawbar"><DrawingToolbar tool={tool} onTool={pickTool} color={color} onColor={setColor} only={['pen', 'arrow', 'circle', 'rect']} /></div>
         )}
         {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
+        <div className="m-dock">
         <div className="m-ctrl">
-          <button className="m-ic" onClick={toggleMute} aria-label={muted ? 'Remettre le son' : 'Couper le son'}><MIcon d={muted ? M_ICONS.mute : M_ICONS.sound} /></button>
+          <span className="m-left">
+            <button className="m-ic" onClick={toggleMute} aria-label={muted ? 'Remettre le son' : 'Couper le son'}><MIcon d={muted ? M_ICONS.mute : M_ICONS.sound} /></button>
+            <button className="m-ic" onClick={full ? exitFull : enterFull} aria-label={full ? 'Quitter le plein écran' : 'Plein écran'}><MIcon d={full ? M_ICONS.shrink : M_ICONS.expand} /></button>
+          </span>
           <button className="m-ic m-playbtn" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}><MIcon d={playing ? M_ICONS.pause : M_ICONS.play} /></button>
           <span className="m-undo">
             <button className="m-ic" onClick={undoDraw} disabled={!pending} aria-label="Annuler le dernier dessin"><MIcon d={M_ICONS.undo} /></button>
@@ -1313,6 +1346,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
             : admin && <button aria-label="Ajouter un lien de téléchargement" title="Lien de téléchargement" onClick={editDownload}><MIcon d={M_ICONS.download} /></button>}
           {!(isYt || source === 'drive') && <button aria-label="Capture" title="Capture" onClick={capture} disabled={capturing}><MIcon d={M_ICONS.camera} /></button>}
         </nav>
+        </div>
         {sheet && <div className="m-veil" onClick={() => setSheet(null)} />}
         <section className={`m-sheet ${sheet ? `open ${sheet}` : ''}`} aria-hidden={!sheet}>
           <button className="m-handle" aria-label="Fermer" onClick={() => setSheet(null)}><i /></button>
