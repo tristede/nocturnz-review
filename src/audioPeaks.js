@@ -8,12 +8,14 @@ import { createFile, MP4BoxBuffer } from 'mp4box';
 export const bucketsFor = (dur) => Math.min(10000, Math.max(200, Math.round(dur * 200)));
 
 // même échelle pour les deux canaux, courbe adoucie (les passages calmes restent visibles)
+// max : pic absolu du fichier (amplitude 0..1), pour retrouver le vrai niveau en dB (indicateur de niveau)
+export const PEAK_CURVE = 0.6;
 export function toPeaks(raw) {
   let max = 0;
   for (const ch of raw) for (let i = 0; i < ch.length; i++) if (ch[i] > max) max = ch[i];
   max = max || 1;
-  const to8 = (o) => Uint8Array.from(o, (v) => Math.round(255 * Math.pow(v / max, 0.6)));
-  return { l: to8(raw[0]), r: raw[1] ? to8(raw[1]) : null };
+  const to8 = (o) => Uint8Array.from(o, (v) => Math.round(255 * Math.pow(v / max, PEAK_CURVE)));
+  return { l: to8(raw[0]), r: raw[1] ? to8(raw[1]) : null, max };
 }
 
 async function readIndex(file) {

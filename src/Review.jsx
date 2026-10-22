@@ -5,6 +5,7 @@ import CommentNavigation from './CommentNavigation';
 import { readSession, writeSession } from './reviewSession';
 import { captureAnnotatedFrame } from './captureFrame';
 import DrawingToolbar from './DrawingToolbar';
+import AudioMeter from './AudioMeter';
 import * as data from './data';
 import { notifyHost } from './push';
 import { videoUrl, driveMeta, cleanDownloadUrl } from './links';
@@ -160,6 +161,10 @@ const M_ICONS = {
   marker: <path d="M6 4h12v10l-6 6-6-6z" />,
   expand: <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />,
   shrink: <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" />,
+  frPrev: <path d="m14.5 6-6 6 6 6" />,
+  frNext: <path d="m9.5 6 6 6-6 6" />,
+  mkPrev: <><path d="M5.5 5v14" /><path d="M18.5 6.5 9 12l9.5 5.5z" /></>,
+  mkNext: <><path d="M18.5 5v14" /><path d="M5.5 6.5 15 12l-9.5 5.5z" /></>,
   download: <path d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19.5h14" />,
   camera: <><path d="M3 7h4l2-3h6l2 3h4v13H3z" /><circle cx="12" cy="13" r="3.6" /></>,
   back: <path d="M15 5 8 12l7 7" />,
@@ -358,7 +363,7 @@ function createYtShim({ host, videoId, box, onDuration, onState, onTime }) {
   return { shim, destroy() { dead = true; clearInterval(poll); try { player?.destroy(); } catch {} host.remove(); } };
 }
 
-export default function Review({ aid, title, admin, back = null, deadline = null, initialFps, initialPeaks, source, videoId, mediaUrl = null, download = null, fileBytes = null, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
+export default function Review({ aid, title, admin, back = null, deadline = null, initialFps, initialPeaks, initialPeakMax = null, source, videoId, mediaUrl = null, download = null, fileBytes = null, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
   const isYt = source === 'youtube';
   const sessionKey = `review-session:${aid}:${currentN}`, sourceIdentity = `${source}:${videoId}`;
   const [remembered] = useState(() => readSession(sessionKey, sourceIdentity));
@@ -404,7 +409,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [pro, setPro] = useState(false);
   const [view, setView] = useState({ s: 0, span: 0 });
   const [hover, setHover] = useState(null);
-  const [peaks, setPeaks] = useState(() => decodePeaks(initialPeaks));
+  const [peaks, setPeaks] = useState(() => { const p = decodePeaks(initialPeaks); if (p && initialPeakMax) p.max = initialPeakMax; return p; });
   const [waving, setWaving] = useState(false);
   const [peaksError, setPeaksError] = useState(false); // l'onde est calculée mais pas enregistrée
   const [needLocalWave, setNeedLocalWave] = useState(false); // fichier trop lourd : l'onde doit venir du fichier sur l'ordinateur
@@ -730,7 +735,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   // enregistre l'onde sur le serveur et le confirme ; sinon l'avertit (elle disparaîtrait au rechargement)
   const savePeaks = async (p) => {
     try {
-      await data.saveVersion(aid, currentN, { peaks: encodePeaks(p) });
+      await data.saveVersion(aid, currentN, { peaks: encodePeaks(p), peakMax: p.max ?? null });
       setPeaksError(false);
       return true;
     } catch {}
@@ -794,6 +799,13 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const beginCompose = () => { vid.current?.pause(); };
   const pickTool = (t) => { beginCompose(); setTool((cur) => (cur === t ? null : t)); };
   const toggleTools = () => { setToolsOpen((o) => { if (o) setTool(null); else vid.current?.pause(); return !o; }); };
+  const meterTime = useCallback(() => (scrub.current.pending != null ? (scrub.current.pending + 0.5) / Ff.current : vid.current?.currentTime || 0), []);
+  // repère précédent / suivant (commentaires triés par temps)
+  const jumpMark = (dir) => {
+    const list = [...tops].sort((a, b) => a.t - b.t);
+    const target = dir > 0 ? list.find((c) => frameOf(c.t) > curF) : [...list].reverse().find((c) => frameOf(c.t) < curF);
+    if (target) { setSel(target.id); seekT(target.t); }
+  };
   // annuler / refaire le dernier dessin du brouillon
   const undoDraw = () => {
     if (shapes.length) { const last = shapes[shapes.length - 1]; setShapes(shapes.slice(0, -1)); setRedoStack((r) => [...r, { shape: last }]); }
@@ -1294,6 +1306,8 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     const shortStatus = approval ? (approval.status === 'approved' ? 'Validée' : 'Modifications demandées') : admin ? 'En attente de l’avis du client' : null;
     const verdict = approval ? (approval.status === 'approved' ? '✓ Validée' : 'Modifs') : 'Valider';
     const pending = shapes.length + (pin ? 1 : 0);
+    const cur = tops.find((c) => c.id === sel)
+      || tops.find((c) => (c.t_end ? now >= c.t - 0.02 && now <= c.t_end : Math.abs(c.t - now) < 0.5));
     return (
       <div className="review mobile">
         <header className="m-top">
@@ -1316,13 +1330,33 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           <div className="m-drawbar"><DrawingToolbar tool={tool} onTool={pickTool} color={color} onColor={setColor} only={['pen', 'arrow', 'circle', 'rect']} /></div>
         )}
         {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
+        {cur && (
+          <div className={`m-cur ${cur.resolved ? 'done' : ''}`}>
+            <span className="m-cur-n">{numberOf[cur.id]}</span>
+            <div className="m-cur-text">
+              <div className="m-cur-head"><b>{rangeLabel(cur)}</b> · {cur.author}{kids(cur.id).length ? ` · ${kids(cur.id).length} réponse(s)` : ''}</div>
+              {cur.body !== 'Repère' || hasMarks(cur) ? <p>{cur.body}</p> : <p className="mut">Repère</p>}
+            </div>
+            <div className="m-cur-act">
+              <button className="ghost sm" onClick={() => toggle(cur)}>{cur.resolved ? 'Rouvrir' : '✓'}</button>
+              <button className="ghost sm" onClick={() => openSheet('list')} aria-label="Voir dans la liste">…</button>
+            </div>
+          </div>
+        )}
+        <div className="m-meterbar"><AudioMeter peaks={peaks} dur={dur} getTime={meterTime} playing={playing} now={now} /></div>
         <div className="m-dock">
         <div className="m-ctrl">
           <span className="m-left">
             <button className="m-ic" onClick={toggleMute} aria-label={muted ? 'Remettre le son' : 'Couper le son'}><MIcon d={muted ? M_ICONS.mute : M_ICONS.sound} /></button>
             {canNativeVideo && <button className="m-ic" onClick={nativeFullscreen} aria-label="Plein écran"><MIcon d={M_ICONS.expand} /></button>}
           </span>
-          <button className="m-ic m-playbtn" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}><MIcon d={playing ? M_ICONS.pause : M_ICONS.play} /></button>
+          <span className="m-transport">
+            <button className="m-ic" onClick={() => jumpMark(-1)} aria-label="Repère précédent"><MIcon d={M_ICONS.mkPrev} /></button>
+            <button className="m-ic" onClick={() => stepF(-1)} aria-label="Image précédente"><MIcon d={M_ICONS.frPrev} /></button>
+            <button className="m-ic m-playbtn" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}><MIcon d={playing ? M_ICONS.pause : M_ICONS.play} /></button>
+            <button className="m-ic" onClick={() => stepF(1)} aria-label="Image suivante"><MIcon d={M_ICONS.frNext} /></button>
+            <button className="m-ic" onClick={() => jumpMark(1)} aria-label="Repère suivant"><MIcon d={M_ICONS.mkNext} /></button>
+          </span>
           <span className="m-undo">
             <button className="m-ic" onClick={undoDraw} disabled={!pending} aria-label="Annuler le dernier dessin"><MIcon d={M_ICONS.undo} /></button>
             <button className="m-ic" onClick={redoDraw} disabled={!redoStack.length} aria-label="Refaire le dessin"><MIcon d={M_ICONS.redo} /></button>
@@ -1451,6 +1485,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         <div className="transport">
           <div className="timecode"><span className="cur">{label(now)}</span><span className="tot">/ {label(dur || 0)}</span></div>
           <button className="ghost sm" onClick={addMarker} disabled={marking || !dur} title="Poser un repère à l’image affichée · touche M">Repère</button>
+          <div className="meter-wrap"><AudioMeter peaks={peaks} dur={dur} getTime={meterTime} playing={playing} now={now} /></div>
           <div className="spacer" />
           {pro && <span className="meta">{F} images/s</span>}
         </div>
