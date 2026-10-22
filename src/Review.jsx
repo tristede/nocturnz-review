@@ -197,7 +197,7 @@ const rulerLabel = (t, step) => {
 
 // Timeline mobile façon CapCut : la tête reste au centre, la timeline défile sous le doigt.
 // Glisser lentement = image par image ; deux doigts ou double toucher = zoom.
-function MobileTrack({ dur, now, F, clock, numberOf, sel, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick, onAdd, pending }) {
+function MobileTrack({ dur, now, F, clockOf, playing, getTime, numberOf, sel, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick, onAdd, pending }) {
   const el = useRef(null);
   const [w, setW] = useState(360);
   const [pps, setPps] = useState(64);              // pixels par seconde
@@ -212,8 +212,20 @@ function MobileTrack({ dur, now, F, clock, numberOf, sel, peaks, flatPeaks, wave
     const node = el.current;
     return () => { ro.disconnect(); node.removeEventListener('touchstart', stop); node.removeEventListener('touchmove', stop); };
   }, []);
-  // la tête marque le début de l'image affichée (le lecteur vise le milieu de l'image pour éviter les arrondis)
-  const span = w / pps, vs = Math.floor(now * F + 1e-4) / F - span / 2;
+  // fluidité : pendant la lecture la timeline suit la vidéo à chaque image d'écran (et non aux quelques
+  // « timeupdate » par seconde du lecteur) ; pendant un glissement elle suit le doigt, le lecteur suit à son rythme
+  const [liveT, setLiveT] = useState(null), [dragT, setDragT] = useState(null);
+  useEffect(() => {
+    if (!playing) { setLiveT(null); return; }
+    let raf;
+    const tick = () => { setLiveT(getTime()); raf = requestAnimationFrame(tick); };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, getTime]);
+  const shownT = dragT ?? liveT ?? now;
+  // la tête marque le début de l'image affichée (le lecteur vise le milieu de l'image pour éviter les arrondis) ;
+  // en lecture, défilement continu
+  const span = w / pps, vs = (liveT != null && dragT == null ? shownT : Math.floor(shownT * F + 1e-4) / F) - span / 2;
   const xp = (t) => `${((t - vs) / span) * 100}%`;
   const maxF = Math.max(0, Math.ceil(dur * F) - 1);
   // dézoom maximal : toute la vidéo visible d'un côté de la tête ; zoom maximal : ~16 px par image à 25 i/s
@@ -232,7 +244,7 @@ function MobileTrack({ dur, now, F, clock, numberOf, sel, peaks, flatPeaks, wave
       st.pinch = { d: Math.abs(a - b) || 1, pps };
       return;
     }
-    st.start = { x: e.clientX, t: now, moved: false };
+    st.start = { x: e.clientX, t: shownT, moved: false, sent: 0 };
   };
   const move = (e) => {
     const st = g.current;
@@ -247,13 +259,17 @@ function MobileTrack({ dur, now, F, clock, numberOf, sel, peaks, flatPeaks, wave
     const dx = e.clientX - st.start.x;
     if (Math.abs(dx) > 6) st.start.moved = true;
     if (!st.start.moved) return;
-    onScrub(clamp(Math.floor((st.start.t - dx / pps) * F + 1e-4), 0, maxF));
+    const f = clamp(Math.floor((st.start.t - dx / pps) * F + 1e-4), 0, maxF);
+    st.start.f = f;
+    setDragT((f + 0.5) / F);                       // la timeline suit le doigt tout de suite
+    const t = performance.now();                    // le reste de la page (vidéo, compteur) au plus ~20 fois/s
+    if (t - st.start.sent > 50) { st.start.sent = t; onScrub(f); }
   };
   const up = (e) => {
     const st = g.current;
     st.pts.delete(e.pointerId);
     if (st.pts.size >= 1) return;
-    if (st.start?.moved) onScrubEnd();
+    if (st.start?.moved) { if (st.start.f != null) onScrub(st.start.f); onScrubEnd(); setDragT(null); }
     else if (st.start && !st.pinch) {
       // double toucher : tout voir ⇄ zoom de travail
       const t = performance.now();
@@ -284,7 +300,7 @@ function MobileTrack({ dur, now, F, clock, numberOf, sel, peaks, flatPeaks, wave
         {minors.map((t) => <i key={`m${t}`} className="m-minor" style={{ left: xp(t) }} />)}
         {ticks.map((t) => <span key={t} style={{ left: xp(t) }}>{rulerLabel(t, step)}</span>)}
       </div>
-      <div className="m-clock">{clock}</div>
+      <div className="m-clock">{clockOf(shownT)}</div>
       <div className="m-lane m-sound">
         {dur > 0 && <div className="m-sound-bg" style={clipStyle} />}
         {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} fine />}
@@ -1386,7 +1402,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           </span>
         </div>
         <MobileTrack dur={dur} now={now} F={F} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
-          clock={<><b>{tcSimple(now)}<small>:{pad(curF % base)}</small></b>/{tcSimple(dur || 0)}</>}
+          playing={playing} getTime={meterTime} clockOf={(t) => <><b>{tcSimple(t)}<small>:{pad(frameOf(t) % base)}</small></b>/{tcSimple(dur || 0)}</>}
           tops={tops} numberOf={numberOf} sel={sel} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
           onPick={(c) => { setSel(c.id); seekT(c.t); }} onAdd={() => openSheet('compose')} pending={pending} />
         <nav className="m-tools" aria-label="Outils">

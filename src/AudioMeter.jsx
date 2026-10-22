@@ -59,7 +59,7 @@ export default function AudioMeter({ peaks, dur, getTime, playing, now, vertical
       });
       const peak = Math.max(...s.hold);
       if (readout.current) {
-        readout.current.textContent = peak <= FLOOR + 0.5 ? '−∞' : `${peak.toFixed(1).replace('.', ',').replace('-', '−')} dB`;
+        readout.current.textContent = rel ? '' : peak <= FLOOR + 0.5 ? '−∞' : `${peak.toFixed(1).replace('.', ',').replace('-', '−')} dB`;
         readout.current.style.color = !rel && now - s.clip < 2000 ? '#ff3b3b' : rel ? '#b9a2f2' : colorOf(peak);
       }
       if (playing) raf = requestAnimationFrame(draw);
@@ -74,10 +74,10 @@ export default function AudioMeter({ peaks, dur, getTime, playing, now, vertical
       <span className="meter-lr" aria-hidden="true"><i>L</i><i>R</i></span>
       <div className="meter-body">
         <canvas ref={cv} />
-        <div className="meter-scale" aria-hidden="true">{SCALE.map((db) => <span key={db} style={{ [vertical ? 'bottom' : 'left']: `${((db - FLOOR) / -FLOOR) * 100}%` }}>{db === 0 ? '0' : db}</span>)}</div>
+        {peaks.max && <div className="meter-scale" aria-hidden="true">{SCALE.map((db) => <span key={db} style={{ [vertical ? 'bottom' : 'left']: `${((db - FLOOR) / -FLOOR) * 100}%` }}>{db === 0 ? '0' : db}</span>)}</div>}
       </div>
       <b ref={readout} className="meter-db">−∞</b>
-      {!peaks.max && <small className="meter-rel">relatif</small>}
+      {!peaks.max && <small className="meter-rel">niveau relatif</small>}
     </div>
   );
 }
