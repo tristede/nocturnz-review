@@ -441,7 +441,9 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [muted, setMuted] = useState(false);
   const [dlUrl, setDlUrl] = useState(download);
   const [isFull, setIsFull] = useState(false); // ordinateur : notre lecteur en plein écran
-  const stageRef = useRef(null); // lien de téléchargement de la version (Drive…)
+  const stageRef = useRef(null);
+  const landscape = useMedia('(orientation: landscape)');
+  const [skipTurnHint, setSkipTurnHint] = useState(false);   // « non merci » sur l'invite plein écran // lien de téléchargement de la version (Drive…)
 
   const [replyTo, setReplyTo] = useState(null);
   const [replyText, setReplyText] = useState('');
@@ -755,16 +757,18 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const AUTO_WAVE_MAX = 300e6; // au-delà, télécharger tout le fichier pour en extraire le son n'est pas raisonnable
   const wavedRef = useRef(false);
   useEffect(() => {
-    if (isYt || !admin || peaks || wavedRef.current || !Number.isFinite(dur) || dur <= 0) return;
+    // onde absente, ou ancienne onde sans niveau réel (peakMax) d'un fichier importé : on (re)calcule
+    const remeasure = peaks && !peaks.max && source === 'file';
+    if (isYt || !admin || (peaks && !remeasure) || wavedRef.current || !Number.isFinite(dur) || dur <= 0) return;
     if (source === 'drive' && fileSize == null) return; // on attend la taille
     wavedRef.current = true;
-    if ((source === 'file' ? fileBytes : fileSize) > AUTO_WAVE_MAX) { setNeedLocalWave(true); return; }
-    setWaving(true);
+    if ((source === 'file' ? fileBytes : fileSize) > AUTO_WAVE_MAX) { if (!remeasure) setNeedLocalWave(true); return; }
+    if (!remeasure) setWaving(true);
     (async () => {
       try {
         const p = await computePeaks(vid.current.currentSrc, dur);
-        if (p) { setPeaks(p); await savePeaks(p); } else setNeedLocalWave(true);
-      } catch { setNeedLocalWave(true); } finally { setWaving(false); }
+        if (p) { setPeaks(p); await savePeaks(p); } else if (!remeasure) setNeedLocalWave(true);
+      } catch { if (!remeasure) setNeedLocalWave(true); } finally { setWaving(false); }
     })();
   }, [admin, peaks, dur, aid, currentN, fileSize, source]);
 
@@ -884,6 +888,25 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     else stageRef.current?.requestFullscreen?.().catch(() => {});
   };
   const toggleFullRef = useRef(null); toggleFullRef.current = toggleFull;
+  // mobile : tourner le téléphone en paysage ouvre le lecteur natif en plein écran ; revenir en portrait le referme
+  // (Safari peut refuser hors d'un toucher : rien ne se passe alors, le bouton plein écran reste disponible)
+  useEffect(() => {
+    if (!mobile || !canNativeVideo) return;
+    const mq = window.matchMedia('(orientation: landscape)');
+    const onTurn = () => {
+      const v = vid.current;
+      if (!v || !v.duration) return;
+      try {
+        if (mq.matches) {
+          if (v.webkitEnterFullscreen && !v.webkitDisplayingFullscreen) v.webkitEnterFullscreen();
+          else if (!document.fullscreenElement) v.requestFullscreen?.().catch(() => {});
+        } else if (v.webkitDisplayingFullscreen) v.webkitExitFullscreen();
+        else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      } catch {}
+    };
+    mq.addEventListener('change', onTurn);
+    return () => mq.removeEventListener('change', onTurn);
+  }, [mobile, canNativeVideo]);
   useEffect(() => {
     const f = () => setIsFull(!!document.fullscreenElement && document.fullscreenElement === stageRef.current);
     document.addEventListener('fullscreenchange', f);
@@ -1378,6 +1401,12 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           {!(isYt || source === 'drive') && <button aria-label="Capture" title="Capture" onClick={capture} disabled={capturing}><MIcon d={M_ICONS.camera} /></button>}
         </nav>
         </div>
+        {landscape && canNativeVideo && dur > 0 && !skipTurnHint && !sheet && (
+          <div className="m-turn">
+            <button className="m-turn-go" onClick={nativeFullscreen}><MIcon d={M_ICONS.expand} /><span>Touche pour passer en plein écran</span></button>
+            <button className="link" onClick={() => setSkipTurnHint(true)}>Rester ici</button>
+          </div>
+        )}
         {sheet && <div className="m-veil" onClick={() => setSheet(null)} />}
         <section className={`m-sheet ${sheet ? `open ${sheet}` : ''}`} aria-hidden={!sheet}>
           <button className="m-handle" aria-label="Fermer" onClick={() => setSheet(null)}><i /></button>
@@ -1550,15 +1579,16 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           </div>
         )}
 
-        {((pro && isYt) || waving || peaksError || (admin && !peaks && (isYt || needLocalWave)) || (admin && fileSize > 1.5e9)) && (
+        {((pro && isYt) || waving || peaksError || (admin && !peaks && (isYt || needLocalWave)) || (admin && peaks && !peaks.max && (isYt || source !== 'file' || fileBytes > AUTO_WAVE_MAX)) || (admin && fileSize > 1.5e9)) && (
           <div className="notes">
             {isYt && pro && <span>Vidéo YouTube : précision à l’image non garantie{peaks ? '' : ', pas d’onde sonore'}.{admin ? ' Règle les images/s dans « Avancé » du tableau de bord.' : ''}</span>}
             {admin && fileSize > 1.5e9 && (
               <span>Fichier de {(fileSize / 1e9).toFixed(1).replace('.', ',')} Go : depuis Drive, la lecture et les sauts dans la timeline peuvent être lents, et Google bloque parfois temporairement. Pour les retours, partage plutôt une version allégée (1080p).</span>
             )}
-            {admin && !peaks && !waving && (isYt || needLocalWave) && (
+            {admin && !waving && ((!peaks && (isYt || needLocalWave)) || (peaks && !peaks.max && (isYt || source !== 'file' || fileBytes > AUTO_WAVE_MAX))) && (
               <div className="row" style={{ flexWrap: 'wrap' }}>
-                <button className="ghost sm" onClick={(e) => e.currentTarget.nextSibling.click()}>Ajouter l’onde sonore</button>
+                {peaks && <span>L’indicateur de niveau est relatif pour cette version (onde calculée avant la mesure du niveau réel).</span>}
+                <button className="ghost sm" onClick={(e) => e.currentTarget.nextSibling.click()}>{peaks ? 'Mesurer le niveau réel' : 'Ajouter l’onde sonore'}</button>
                 <input type="file" accept="video/*,audio/*" hidden onChange={peaksFromFile} />
                 <span>Choisis le fichier vidéo sur ton ordinateur : seul le son est lu, rien n’est envoyé.</span>
               </div>
