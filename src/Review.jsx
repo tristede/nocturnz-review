@@ -176,7 +176,6 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
   const span = w / pps, vs = now - span / 2;
   const xp = (t) => `${((t - vs) / span) * 100}%`;
   const maxF = Math.max(0, Math.ceil(dur * F) - 1);
-  const editRows = useMemo(() => { if (!edit) return 0; const v = visibleRows(edit); return v.rows.length + (v.markers.length ? 1 : 0); }, [edit]);
   // dézoom maximal : toute la vidéo visible d'un côté de la tête ; zoom maximal : ~16 px par image à 25 i/s
   // (la tête étant au centre, la vidéo entière doit tenir dans une demi-largeur pour être vue d'un coup)
   const minPps = (w * 0.46) / Math.max(dur, 0.1), maxPps = 400;
@@ -221,9 +220,8 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
   };
 
   return (
-    <div className={`m-track ${editRows ? 'has-edit' : ''}`} ref={el} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
-      style={editRows ? { '--rows': editRows } : undefined}>
-      {dur > 0 && edit && <EditLanes edit={edit} vs={vs} span={span} />}
+    <div className="m-track" ref={el} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+      {dur > 0 && edit && <EditBlocks edit={edit} vs={vs} span={span} />}
       {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
       {dur > 0 && tops.map((c) => c.t_end
         ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
@@ -236,36 +234,22 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
   );
 }
 
-// montage importé (XML) : pistes vidéo (V1 en bas, comme dans Premiere) et marqueurs, alignés sur la vue de la timeline.
-// Purement visuel ; un clic sur un clip ou un marqueur y place la tête de lecture.
-function EditLanes({ edit, vs, span, onSeek }) {
+// montage importé (XML) : chaque clip devient un bloc teinté de la couleur de son libellé, posé sous l'onde,
+// avec un trait à chaque coupe ; les marqueurs sont des traits fins. Purement visuel : la timeline garde ses clics.
+function EditBlocks({ edit, vs, span }) {
   const xp = (t) => `${((t - vs) / span) * 100}%`;
   const wp = (a, b) => `${((b - a) / span) * 100}%`;
   const inView = (a, b) => b >= vs && a <= vs + span;
-  const seek = onSeek ? (t) => (e) => { e.stopPropagation(); onSeek(t); } : () => undefined;
   const { markers, rows } = visibleRows(edit);
   if (!markers.length && !rows.length) return null;
   return (
-    <div className="edit-lanes">
-      {markers.length > 0 && (
-        <div className="edit-row markers">
-          {markers.map(([a, b, name, c], i) => inView(a, b ?? a) && (
-            <div key={i} className={`edit-mk ${b != null ? 'range' : ''}`} title={name || undefined}
-              style={{ left: xp(a), width: b != null ? wp(a, b) : undefined, '--c': c ? colorOf(c) : 'var(--gold)' }} onPointerDown={seek(a)}>
-              {name && <span>{name}</span>}
-            </div>
-          ))}
-        </div>
-      )}
-      {rows.map(({ key, clips }) => (
-        <div key={key} className="edit-row">
-          {clips.map(([a, b, name, c], i) => inView(a, b) && (
-            <div key={i} className="edit-clip" title={name || undefined}
-              style={{ left: xp(a), width: wp(a, b), '--c': colorOf(c) }} onPointerDown={seek(a)}>
-              <span>{name}</span>
-            </div>
-          ))}
-        </div>
+    <div className="edit-blocks" aria-hidden="true">
+      {[...rows].reverse().flatMap(({ key, clips }) => clips.map(([a, b, , c], i) => inView(a, b) && (
+        <div key={`${key}-${i}`} className="edit-clip" style={{ left: xp(a), width: wp(a, b), '--c': colorOf(c) }} />
+      )))}
+      {markers.map(([a, b, , c], i) => inView(a, b ?? a) && (
+        <div key={`m${i}`} className={`edit-mk ${b != null ? 'range' : ''}`}
+          style={{ left: xp(a), width: b != null ? wp(a, b) : undefined, '--c': c ? colorOf(c) : 'var(--gold)' }} />
       ))}
     </div>
   );
@@ -1292,10 +1276,10 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         {monitorView}
 
         {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
-        {dur > 0 && editShown && <EditLanes edit={editShown} vs={vs} span={span} onSeek={seekT} />}
         <div className={`track ${pro ? 'pro' : ''} ${selecting ? 'selecting' : ''}`} ref={track}
           onPointerDown={onTrackDown} onPointerMove={onTrackMove} onPointerUp={onTrackUp} onPointerCancel={onTrackUp}
           onPointerLeave={() => setHover(null)}>
+          {dur > 0 && editShown && <EditBlocks edit={editShown} vs={vs} span={span} />}
           {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
           {pro && ticks.out.map((t) => (
             <div key={t} className="tick" style={{ left: xp(t) }}><span>{tickLabel(t)}</span></div>

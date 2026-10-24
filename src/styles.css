@@ -128,17 +128,11 @@ video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: con
 .head { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; transform: translateX(-1px); box-shadow: 0 0 14px rgba(255, 255, 255, .5); pointer-events: none; }
 .head::before { content: ''; position: absolute; top: 0; left: -4px; width: 10px; height: 8px; border-radius: 0 0 4px 4px; background: #fff; }
 .hov { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, .28); pointer-events: none; }
-/* montage importé (XML) : pistes au-dessus de la timeline, couleur = libellé Premiere */
-.edit-lanes { flex: none; display: flex; flex-direction: column; gap: 2px; margin-bottom: -4px; user-select: none; }
-.edit-row { position: relative; height: 16px; overflow: hidden; }
-.edit-row.markers { height: 14px; }
-.edit-clip { position: absolute; top: 0; bottom: 0; min-width: 2px; box-sizing: border-box; border-radius: 3px; border: 1px solid color-mix(in srgb, var(--c) 80%, #000); background: color-mix(in srgb, var(--c) 55%, #0e0e16); cursor: pointer; overflow: hidden; }
-.edit-clip span, .edit-mk span { display: block; padding: 0 5px; font-size: 10px; line-height: 14px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px rgba(0, 0, 0, .6); pointer-events: none; }
-.edit-clip:hover { filter: brightness(1.2); }
-.edit-mk { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--c); cursor: pointer; max-width: 160px; }
-.edit-mk.range { max-width: none; background: color-mix(in srgb, var(--c) 30%, transparent); border-radius: 0 3px 3px 0; }
-.edit-mk span { line-height: 14px; padding-left: 4px; color: var(--c); text-shadow: none; }
-.edit-mk.range span { color: #fff; }
+/* montage importé (XML) : blocs teintés sous l'onde, un trait par coupe, couleur = libellé Premiere */
+.edit-blocks { position: absolute; inset: 0; pointer-events: none; }
+.edit-clip { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--c) 22%, transparent); box-shadow: inset 1px 0 0 color-mix(in srgb, var(--c) 70%, transparent); }
+.edit-mk { position: absolute; top: 0; bottom: 0; border-left: 1px dashed color-mix(in srgb, var(--c) 80%, transparent); }
+.edit-mk.range { background: color-mix(in srgb, var(--c) 10%, transparent); }
 .hov span { position: absolute; bottom: 6px; left: 8px; padding: 2px 8px; border-radius: 6px; font-size: 11px; white-space: nowrap; background: rgba(10, 10, 16, .85); border: 1px solid var(--line2); font-variant-numeric: tabular-nums; }
 
 /* ───────── Transport ───────── */
@@ -692,12 +686,6 @@ button.m-banner { height: auto; margin: 0 12px 8px; padding: 6px 10px; font-size
 .m-track .wave { position: absolute; left: 0; right: 0; top: 12px; height: calc(100% - 24px); width: 100%; }
 .m-track .mk { top: 4px; }
 .m-track .seg { top: 0; }
-.m-track.has-edit { height: calc(76px + var(--rows) * 13px); }
-.m-track .edit-lanes { position: absolute; left: 0; right: 0; top: 2px; margin: 0; gap: 1px; pointer-events: none; }
-.m-track .edit-row, .m-track .edit-row.markers { height: 12px; }
-.m-track .edit-clip span, .m-track .edit-mk span { font-size: 9px; line-height: 10px; }
-.m-track.has-edit .wave { top: calc(12px + var(--rows) * 13px); height: calc(100% - 24px - var(--rows) * 13px); }
-.m-track.has-edit .mk, .m-track.has-edit .seg { top: calc(var(--rows) * 13px); }
 .edit-hint { margin: 0; max-width: 300px; font-size: 12px; line-height: 1.45; }
 .m-head { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 10px rgba(255, 255, 255, .5); pointer-events: none; z-index: 3; }
 .m-head::before { content: ''; position: absolute; top: 0; left: -5px; width: 12px; height: 8px; border-radius: 0 0 4px 4px; background: #fff; }
