@@ -698,7 +698,7 @@ button.m-banner { height: auto; margin: 0 12px 8px; padding: 6px 10px; font-size
 .m-track .edit-clip span, .m-track .edit-mk span { font-size: 9px; line-height: 10px; }
 .m-track.has-edit .wave { top: calc(12px + var(--rows) * 13px); height: calc(100% - 24px - var(--rows) * 13px); }
 .m-track.has-edit .mk, .m-track.has-edit .seg { top: calc(var(--rows) * 13px); }
-.edit-hint { margin: 0 0 12px; font-size: 12px; }
+.edit-hint { margin: 0; max-width: 300px; font-size: 12px; line-height: 1.45; }
 .m-head { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 10px rgba(255, 255, 255, .5); pointer-events: none; z-index: 3; }
 .m-head::before { content: ''; position: absolute; top: 0; left: -5px; width: 12px; height: 8px; border-radius: 0 0 4px 4px; background: #fff; }
 .m-edge { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, .25); pointer-events: none; }

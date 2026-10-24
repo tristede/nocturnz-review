@@ -1393,8 +1393,8 @@ export default function Review({ aid, title, admin, back = null, deadline = null
                       </div>
                     </div>
                   )}
+                  {admin && !edit && <p className="mut edit-hint">Premiere : Fichier › Exporter › Final Cut Pro XML. Seuls les noms, couleurs de libellé et marqueurs sont gardés, rien d’autre n’est envoyé.</p>}
                 </div>
-                {admin && !edit && <p className="mut edit-hint">Premiere : Fichier › Exporter › Final Cut Pro XML. Seuls les noms, couleurs de libellé et marqueurs sont gardés, rien d’autre n’est envoyé.</p>}
               </details>
             )}
             <details className="pro-settings pro-shortcuts">
