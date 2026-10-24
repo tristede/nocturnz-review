@@ -89,6 +89,7 @@ export default function ReviewPage() {
       deadline={deadline}
       initialFps={current.fps}
       initialPeaks={current.peaks}
+      initialEdit={current.edit || null}
       source={current.source}
       videoId={current.videoId}
       mediaUrl={current.url || null}

@@ -10,6 +10,7 @@ import { notifyHost } from './push';
 import { videoUrl, driveMeta } from './links';
 import { peaksFromLocalMp4, peaksFromBuffer, encodePeaks, b64ToBytes } from './audioPeaks';
 import { COLORS, clamp, parse, hasMarks, Shape, toShape, IconPlay, IconPause } from './draw';
+import { parseEditXml, encodeEdit, decodeEdit, colorOf, visibleRows } from './editXml';
 
 const PRESETS = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60];
 const pad = (n) => String(n).padStart(2, '0');
@@ -162,7 +163,7 @@ const M_ICONS = {
 
 // Timeline mobile façon CapCut : la tête reste au centre, la timeline défile sous le doigt.
 // Glisser lentement = image par image ; deux doigts ou double toucher = zoom.
-function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, onScrub, onScrubEnd, onPick }) {
+function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveLow, tops, edit, onScrub, onScrubEnd, onPick }) {
   const el = useRef(null);
   const [w, setW] = useState(360);
   const [pps, setPps] = useState(40);              // pixels par seconde
@@ -175,6 +176,7 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
   const span = w / pps, vs = now - span / 2;
   const xp = (t) => `${((t - vs) / span) * 100}%`;
   const maxF = Math.max(0, Math.ceil(dur * F) - 1);
+  const editRows = useMemo(() => { if (!edit) return 0; const v = visibleRows(edit); return v.rows.length + (v.markers.length ? 1 : 0); }, [edit]);
   // dézoom maximal : toute la vidéo visible d'un côté de la tête ; zoom maximal : ~16 px par image à 25 i/s
   // (la tête étant au centre, la vidéo entière doit tenir dans une demi-largeur pour être vue d'un coup)
   const minPps = (w * 0.46) / Math.max(dur, 0.1), maxPps = 400;
@@ -219,7 +221,9 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
   };
 
   return (
-    <div className="m-track" ref={el} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+    <div className={`m-track ${editRows ? 'has-edit' : ''}`} ref={el} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+      style={editRows ? { '--rows': editRows } : undefined}>
+      {dur > 0 && edit && <EditLanes edit={edit} vs={vs} span={span} />}
       {dur > 0 && <Wave peaks={peaks || flatPeaks} muted={!peaks} dur={dur} vs={vs} span={span} variant={waveStyle} tint={waveTint} low={waveLow} />}
       {dur > 0 && tops.map((c) => c.t_end
         ? <div key={c.id} className={`seg ${c.resolved ? 'done' : ''}`} style={{ left: xp(c.t), width: `${((c.t_end - c.t) / span) * 100}%` }}
@@ -228,6 +232,41 @@ function MobileTrack({ dur, now, F, peaks, flatPeaks, waveStyle, waveTint, waveL
       {dur > 0 && <div className="m-edge" style={{ left: xp(0) }} />}
       {dur > 0 && <div className="m-edge" style={{ left: xp(dur) }} />}
       <div className="m-head" />
+    </div>
+  );
+}
+
+// montage importé (XML) : pistes vidéo (V1 en bas, comme dans Premiere) et marqueurs, alignés sur la vue de la timeline.
+// Purement visuel ; un clic sur un clip ou un marqueur y place la tête de lecture.
+function EditLanes({ edit, vs, span, onSeek }) {
+  const xp = (t) => `${((t - vs) / span) * 100}%`;
+  const wp = (a, b) => `${((b - a) / span) * 100}%`;
+  const inView = (a, b) => b >= vs && a <= vs + span;
+  const seek = onSeek ? (t) => (e) => { e.stopPropagation(); onSeek(t); } : () => undefined;
+  const { markers, rows } = visibleRows(edit);
+  if (!markers.length && !rows.length) return null;
+  return (
+    <div className="edit-lanes">
+      {markers.length > 0 && (
+        <div className="edit-row markers">
+          {markers.map(([a, b, name, c], i) => inView(a, b ?? a) && (
+            <div key={i} className={`edit-mk ${b != null ? 'range' : ''}`} title={name || undefined}
+              style={{ left: xp(a), width: b != null ? wp(a, b) : undefined, '--c': c ? colorOf(c) : 'var(--gold)' }} onPointerDown={seek(a)}>
+              {name && <span>{name}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {rows.map(({ key, clips }) => (
+        <div key={key} className="edit-row">
+          {clips.map(([a, b, name, c], i) => inView(a, b) && (
+            <div key={i} className="edit-clip" title={name || undefined}
+              style={{ left: xp(a), width: wp(a, b), '--c': colorOf(c) }} onPointerDown={seek(a)}>
+              <span>{name}</span>
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -292,7 +331,7 @@ function createYtShim({ host, videoId, box, onDuration, onState, onTime }) {
   return { shim, destroy() { dead = true; clearInterval(poll); try { player?.destroy(); } catch {} host.remove(); } };
 }
 
-export default function Review({ aid, title, admin, back = null, deadline = null, initialFps, initialPeaks, source, videoId, mediaUrl = null, fileBytes = null, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
+export default function Review({ aid, title, admin, back = null, deadline = null, initialFps, initialPeaks, initialEdit = null, source, videoId, mediaUrl = null, fileBytes = null, versions = [], currentN = 1, latestN = 1, initialStatus = null, initialCompare = null }) {
   const isYt = source === 'youtube';
   const sessionKey = `review-session:${aid}:${currentN}`, sourceIdentity = `${source}:${videoId}`;
   const [remembered] = useState(() => readSession(sessionKey, sourceIdentity));
@@ -342,6 +381,8 @@ export default function Review({ aid, title, admin, back = null, deadline = null
   const [peaksError, setPeaksError] = useState(false); // l'onde est calculée mais pas enregistrée
   const [needLocalWave, setNeedLocalWave] = useState(false); // fichier trop lourd : l'onde doit venir du fichier sur l'ordinateur
   const [waveMsg, setWaveMsg] = useState('');
+  const [edit, setEdit] = useState(() => decodeEdit(initialEdit)); // montage importé depuis un XML (visuel)
+  const [showEdit, setShowEdit] = useState(true);
   const [videoErr, setVideoErr] = useState(false);          // 'drive' (partage retiré…), 'quota' (Drive limite le fichier) ou 'format' (codec illisible)
   const [buffering, setBuffering] = useState(false);
   const [fileSize, setFileSize] = useState(null);           // taille du fichier Drive (pour prévenir l'hôte)
@@ -402,6 +443,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
       if (WAVE_STYLES.some(([k]) => k === ws)) setWaveStyle(ws);
       if (ws === 'low' || localStorage.getItem('review-wavelow') === '1') setWaveLow(true); // ancien style « Bas »
       if (localStorage.getItem('review-wavetint') === 'flat') setWaveTint('flat');
+      if (localStorage.getItem('review-edit') === '0') setShowEdit(false);
       if (!initialFps) { const f = Number(localStorage.getItem(`fps:${aid}:${currentN}`)); if (f) setFps(f); }
     } catch {}
     const c = new URLSearchParams(location.search).get('c');
@@ -709,6 +751,32 @@ export default function Review({ aid, title, admin, back = null, deadline = null
     if (p) { setPeaks(p); setNeedLocalWave(false); await savePeaks(p); }
     else alert(`Impossible de lire le son de ce fichier.${err ? `\n${err.message}` : ''}`);
   };
+
+  // montage : XML exporté de Premiere/Resolve, lu dans le navigateur ; seuls les clips et marqueurs sont enregistrés
+  const importEdit = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    let next;
+    try { next = parseEditXml(await file.text()); } catch (ex) { alert(ex.message); return; }
+    const str = encodeEdit(next);
+    if (str.length > 700e3) { alert('Ce montage contient trop de clips pour être enregistré.'); return; }
+    try { await data.saveVersion(aid, currentN, { edit: str }); } catch { alert('Le montage n’a pas pu être enregistré.'); return; }
+    setEdit(next);
+    if (!showEdit) savePref('review-edit', '1', () => setShowEdit(true));
+  };
+  const removeEdit = async () => {
+    if (!confirm('Retirer le montage importé de cette version ?')) return;
+    try { await data.saveVersion(aid, currentN, { edit: null }); setEdit(null); } catch { alert('Impossible de retirer le montage.'); }
+  };
+  // l'hôte choisit les pistes reprises (V1, V2…, marqueurs) ; enregistré pour tous les spectateurs
+  const toggleEditRow = async (key) => {
+    const hide = edit.hide?.includes(key) ? edit.hide.filter((k) => k !== key) : [...(edit.hide || []), key];
+    const next = { ...edit, hide };
+    setEdit(next);
+    try { await data.saveVersion(aid, currentN, { edit: encodeEdit(next) }); } catch { setEdit(edit); alert('Le choix des pistes n’a pas pu être enregistré.'); }
+  };
+  const editShown = edit && showEdit ? edit : null;
 
   const drawing = shapes.length > 0 || !!pin || !!draft;
   // sans brouillon, le commentaire suit la tête de lecture
@@ -1135,7 +1203,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
           <button className="ghost m-play" onClick={playPause} aria-label={playing ? 'Pause' : 'Lecture'}>{playing ? <IconPause /> : <IconPlay />}</button>
         </div>
         <MobileTrack dur={dur} now={now} F={F} peaks={peaks} flatPeaks={flatPeaks} waveStyle={waveStyle} waveTint={waveTint} waveLow={waveLow}
-          tops={tops} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
+          tops={tops} edit={editShown} onScrub={(f) => scrubTo(f)} onScrubEnd={flushScrub}
           onPick={(c) => { setSel(c.id); seekT(c.t); }} />
         <nav className="m-bar m-tools" aria-label="Outils">
           <button className={toolsOpen && tool !== 'pin' ? 'on' : ''} onClick={() => { if (toolsOpen && tool !== 'pin') { setToolsOpen(false); setTool(null); } else { vid.current?.pause(); setToolsOpen(true); setTool(tool && tool !== 'pin' ? tool : 'pen'); } }}><MIcon d={M_ICONS.pen} /><span>Dessiner</span></button>
@@ -1224,6 +1292,7 @@ export default function Review({ aid, title, admin, back = null, deadline = null
         {monitorView}
 
         {captureMessage && <div className="notes" role="status">{captureMessage}</div>}
+        {dur > 0 && editShown && <EditLanes edit={editShown} vs={vs} span={span} onSeek={seekT} />}
         <div className={`track ${pro ? 'pro' : ''} ${selecting ? 'selecting' : ''}`} ref={track}
           onPointerDown={onTrackDown} onPointerMove={onTrackMove} onPointerUp={onTrackUp} onPointerCancel={onTrackUp}
           onPointerLeave={() => setHover(null)}>
@@ -1291,6 +1360,43 @@ export default function Review({ aid, title, admin, back = null, deadline = null
                 </div>
               </div>
             </details>
+            {(admin || edit) && (
+              <details className="pro-settings">
+                <summary>Montage (XML)</summary>
+                <div className="pro-wave-options">
+                  {edit && (
+                    <div className="dock-group">
+                      <label>Pistes{edit.name ? ` · ${edit.name}` : ''}</label>
+                      <div className="seg-ctl sm">
+                        <button className={showEdit ? 'on' : ''} onClick={() => savePref('review-edit', '1', () => setShowEdit(true))}>Afficher</button>
+                        <button className={!showEdit ? 'on' : ''} onClick={() => savePref('review-edit', '0', () => setShowEdit(false))}>Masquer</button>
+                      </div>
+                    </div>
+                  )}
+                  {admin && edit && (
+                    <div className="dock-group">
+                      <label>Pistes reprises</label>
+                      <div className="seg-ctl sm edit-pick">
+                        {edit.tracks.map((clips, i) => clips.length > 0 && `V${i + 1}`).filter(Boolean).reverse().concat(edit.markers.length ? ['M'] : []).map((k) => (
+                          <button key={k} className={edit.hide?.includes(k) ? '' : 'on'} aria-pressed={!edit.hide?.includes(k)} onClick={() => toggleEditRow(k)}>{k === 'M' ? 'Marqueurs' : k}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {admin && (
+                    <div className="dock-group">
+                      <label>{edit ? 'Remplacer' : 'Importer'}</label>
+                      <div className="row">
+                        <button className="ghost sm" onClick={(e) => e.currentTarget.nextSibling.click()}>{edit ? 'Autre XML…' : 'Choisir un XML…'}</button>
+                        <input type="file" accept=".xml,text/xml,application/xml" hidden onChange={importEdit} />
+                        {edit && <button className="link" onClick={removeEdit}>Retirer</button>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {admin && !edit && <p className="mut edit-hint">Premiere : Fichier › Exporter › Final Cut Pro XML. Seuls les noms, couleurs de libellé et marqueurs sont gardés, rien d’autre n’est envoyé.</p>}
+              </details>
+            )}
             <details className="pro-settings pro-shortcuts">
               <summary>Raccourcis</summary>
               <dl>
