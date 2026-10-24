@@ -227,7 +227,7 @@ function ClubButton({ user }) {
       else { setSent(email.trim().toLowerCase()); setEmail(''); await load(); }
     } catch (ex) { setMsg({ text: ex.message }); } finally { setBusy(false); }
   };
-  const inviteText = (to) => `Je t’invite sur Nocturnz Review (review vidéo à l’image près, sur invitation) : ouvre ${location.origin} et connecte-toi avec Google (${to}).`;
+  const inviteText = (to) => `Je t’invite sur Nocturnz Review (club privé, review vidéo à l’image près) : ouvre ${location.origin} et connecte-toi avec Google (${to}).`;
   const copy = async (to) => {
     try { await navigator.clipboard.writeText(inviteText(to)); setMsg({ text: 'Message copié.', ok: true }); } catch { setMsg({ text: inviteText(to), ok: true }); }
   };
@@ -238,13 +238,13 @@ function ClubButton({ user }) {
   const others = (st?.cards || []).filter((c) => c.email !== String(user.email).toLowerCase());
   return (
     <span className="club">
-      <button className={`ghost icon-btn ${open ? 'on' : ''}`} onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label="Inviter quelqu’un" title="Inviter quelqu’un"><PeopleIcon /></button>
+      <button className={`ghost icon-btn ${open ? 'on' : ''}`} onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-label="Club privé : inviter quelqu’un" title="Club privé : inviter quelqu’un"><PeopleIcon /></button>
       {open && (
         <>
           <div className="menu-veil" onClick={() => setOpen(false)} />
-          <div className="club-panel" role="dialog" aria-label="Invitations">
+          <div className="club-panel" role="dialog" aria-label="Club privé">
             <div className="club-head">
-              <strong>Invitations</strong>
+              <strong>Club privé</strong>
               <span className="mut">{!st ? '…' : st.admin ? 'admin · invitations illimitées' : `${left} invitation${left > 1 ? 's' : ''} sur ${data.CLUB_MAX}`}</span>
             </div>
             <p className="mut club-intro">Les membres créent leurs propres reviews. Tes clients, eux, n’ont pas besoin d’être membres : ils utilisent le lien de review.</p>
@@ -270,7 +270,7 @@ function ClubButton({ user }) {
                   <li key={c.email}>
                     <span className="club-mail">{c.email}{st.admin && c.byName ? <small> · par {c.byName}</small> : null}</span>
                     <span className={`club-state ${c.joined ? 'ok' : ''}`}>{c.joined ? 'membre' : 'en attente'}</span>
-                    {(st.admin || !c.joined) && <DeleteButton label={c.joined ? 'Retirer l’accès' : 'Annuler l’invitation'} confirmText={c.joined ? 'Retirer ?' : 'Annuler ?'} onConfirm={() => cancel(c)} />}
+                    {(st.admin || !c.joined) && <DeleteButton label={c.joined ? 'Retirer du club' : 'Annuler l’invitation'} confirmText={c.joined ? 'Retirer ?' : 'Annuler ?'} onConfirm={() => cancel(c)} />}
                   </li>
                 ))}
               </ul>
@@ -314,7 +314,7 @@ export default function Dashboard() {
   }
   if (denied) {
     return (
-      <Notice title="Accès refusé" text="Cette adresse n’a pas été invitée.">
+      <Notice title="Accès refusé" text="Cette adresse n’a pas été invitée au club. Si on t’a invité, c’est avec une autre adresse Gmail.">
         <p className="mut">Connecté en tant que <strong style={{ color: 'var(--txt)' }}>{user.email}</strong>. <button className="link" onClick={() => switchAccount().catch(() => {})}>Changer de compte</button></p>
       </Notice>
     );

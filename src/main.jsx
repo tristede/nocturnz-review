@@ -4,7 +4,6 @@ import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
 import App from './App';
 import './styles.css';
-import { autoUpdate } from './autoUpdate.js';
 
 // Les gestes de zoom sont gérés par les moniteurs et la timeline, sans agrandir la page.
 const preventPageZoom = (event) => {
@@ -45,8 +44,6 @@ if ('serviceWorker' in navigator) {
     .catch(() => {});
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
-
-autoUpdate();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
